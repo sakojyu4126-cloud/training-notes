@@ -1,0 +1,10 @@
+{
+  "name": "法定研修報告書・議事録自動作成システム",
+  "description": "音声データやコピーペーストした教材資料から、介護事業所の監査に耐えうる完璧な法定研修の報告書と受講者理解度テストを自動生成・印刷する統合管理システム",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

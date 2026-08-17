@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+/* 
+ * Custom Fonts, Print Styles and Dotted line Notepads for Statutory Training Reports
+ */
+
+/* 1. Font Definitions and Fallbacks */
+.font-hgs-gothic {
+  font-family: "HGSｺﾞｼｯｸM", "HGS Gothic M", "MS Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+}
+
+.font-meiryo-ui {
+  font-family: "Meiryo UI", "Meiryo", sans-serif;
+}
+
+.font-ud-kyokasho {
+  font-family: "UD デジタル 教科書体 NK", "UD Digital Kyokasho NK", "UD Digi Kyokasho", "MS Kyokasho", cursive, sans-serif;
+}
+
+/* 2. Dotted administrative notepad lines to match the PDF design exactly */
+.dotted-notepad {
+  background-image: linear-gradient(to bottom, transparent 95%, #cbd5e1 95%);
+  background-size: 100% 1.55rem;
+  line-height: 1.55rem !important;
+  padding-bottom: 4px;
+}
+
+/* 3. A4 Page preview sizing on screen */
+.a4-page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 20mm 15mm;
+  margin: 0 auto;
+  background: white;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+}
+
+/* 4. Print layout optimization */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 10pt;
+  }
+
+  /* Hide navigation, buttons, edit inputs, everything except the A4 report page */
+  .no-print {
+    display: none !important;
+  }
+
+  .print-area {
+    display: block !important;
+    width: 210mm !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 10mm 10mm !important; /* Slightly smaller padding for perfect printable area */
+    box-shadow: none !important;
+    border: none !important;
+    box-sizing: border-box !important;
+    page-break-after: always;
+  }
+
+  /* Force background colors and borders in print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Page breaks for multi-page (e.g. Report on Page 1, Quiz on Page 2) */
+  .page-break {
+    page-break-before: always;
+  }
+}
