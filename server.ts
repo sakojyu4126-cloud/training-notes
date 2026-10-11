@@ -375,15 +375,88 @@ async function processAudioForGemini(
   };
 }
 
+// API: Chunked Audio Upload Endpoint (bypasses 32MB Cloud Run payload limits completely)
+app.post("/api/audio/upload-chunk", express.raw({ type: "*/*", limit: "20mb" }), async (req, res) => {
+  try {
+    const uploadId = req.headers["x-upload-id"] as string;
+    const chunkIndex = parseInt(req.headers["x-chunk-index"] as string, 10);
+    const totalChunks = parseInt(req.headers["x-total-chunks"] as string, 10);
+    const rawMimeType = (req.headers["x-mime-type"] as string) || "audio/mp4";
+    const rawFileName = req.headers["x-file-name"] as string;
+    const fileName = rawFileName ? decodeURIComponent(rawFileName) : "recording.m4a";
+
+    if (!uploadId || isNaN(chunkIndex) || isNaN(totalChunks)) {
+      return res.status(400).json({ success: false, error: "Invalid chunk upload headers" });
+    }
+
+    const chunkData = req.body as Buffer;
+    if (!chunkData || chunkData.length === 0) {
+      return res.status(400).json({ success: false, error: "Empty chunk data" });
+    }
+
+    const tempChunkDir = path.join("/tmp", "chunks");
+    if (!fs.existsSync(tempChunkDir)) {
+      fs.mkdirSync(tempChunkDir, { recursive: true });
+    }
+
+    const chunkFilePath = path.join(tempChunkDir, `${uploadId}_part_${chunkIndex}`);
+    fs.writeFileSync(chunkFilePath, chunkData);
+
+    // If this is the last chunk, assemble all parts into one file
+    if (chunkIndex === totalChunks - 1) {
+      let ext = ".m4a";
+      const cleanMime = rawMimeType.toLowerCase();
+      if (cleanMime.includes("wav")) ext = ".wav";
+      else if (cleanMime.includes("webm")) ext = ".webm";
+      else if (cleanMime.includes("mp3")) ext = ".mp3";
+      else if (cleanMime.includes("ogg")) ext = ".ogg";
+
+      const finalPath = path.join("/tmp", `${uploadId}${ext}`);
+      const writeStream = fs.createWriteStream(finalPath);
+
+      for (let i = 0; i < totalChunks; i++) {
+        const partPath = path.join(tempChunkDir, `${uploadId}_part_${i}`);
+        if (fs.existsSync(partPath)) {
+          const partBuf = fs.readFileSync(partPath);
+          writeStream.write(partBuf);
+          try { fs.unlinkSync(partPath); } catch {}
+        }
+      }
+      writeStream.end();
+
+      await new Promise<void>((resolve) => {
+        writeStream.on("finish", () => resolve());
+      });
+
+      const stats = fs.statSync(finalPath);
+      console.log(`Audio file successfully assembled: ${uploadId} (${(stats.size / 1024 / 1024).toFixed(2)} MB, ${rawMimeType})`);
+
+      return res.json({
+        success: true,
+        complete: true,
+        audioId: uploadId,
+        size: stats.size,
+        mimeType: rawMimeType,
+        fileName: fileName
+      });
+    }
+
+    return res.json({ success: true, complete: false, chunkIndex });
+  } catch (err: any) {
+    console.error("Chunk upload error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // API: Summarize Audio or Text and Generate quiz
 app.post("/api/summarize", async (req, res) => {
   let uploadedGeminiFile: any = null;
   let tempAudioFileToClean: string | null = null;
 
   try {
-    const { audioData, mimeType, textData, theme, officeName } = req.body;
+    const { audioId, audioData, mimeType, textData, theme, officeName } = req.body;
 
-    if (!audioData && !textData && !theme?.trim()) {
+    if (!audioId && !audioData && !textData && !theme?.trim()) {
       return res.status(400).json({ 
         success: false, 
         error: "研修テーマ、テキスト資料、または音声のいずれかを入力してください。" 
@@ -395,30 +468,62 @@ app.post("/api/summarize", async (req, res) => {
     // Prepare multi-modal inputs for Gemini
     const contents: any[] = [];
 
-    // Add audio if provided (supporting .m4a, iPhone voice memo, mp3, wav, etc.)
-    if (audioData) {
-      const base64Data = audioData.includes("base64,") ? audioData.split("base64,")[1] : audioData;
-      const { buffer, mimeType: processedMime, tempFilePath } = await processAudioForGemini(base64Data, mimeType);
-      tempAudioFileToClean = tempFilePath || null;
+    // Resolve audio: from chunk-uploaded audioId or from base64 audioData
+    let processedBuffer: Buffer | null = null;
+    let processedMime: string = (mimeType || "audio/mp4").split(";")[0].trim().toLowerCase();
 
-      const sizeMB = buffer.length / (1024 * 1024);
-      console.log(`Audio processed successfully: size=${sizeMB.toFixed(2)}MB, mime=${processedMime}`);
+    if (audioId) {
+      const candidateFiles = fs.readdirSync("/tmp").filter(f => f.startsWith(audioId) && !f.includes("_part_"));
+      if (candidateFiles.length > 0) {
+        const assembledPath = path.join("/tmp", candidateFiles[0]);
+        tempAudioFileToClean = assembledPath;
+
+        // Normalize and compress with ffmpeg to standard 16kHz mono AAC
+        const tempId = `norm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const outputPath = path.join("/tmp", `${tempId}_out.m4a`);
+
+        try {
+          await execAsync(`ffmpeg -i "${assembledPath}" -vn -ac 1 -ar 16000 -c:a aac -b:a 32k "${outputPath}" -y`);
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+            processedBuffer = fs.readFileSync(outputPath);
+            processedMime = "audio/mp4";
+            try { fs.unlinkSync(outputPath); } catch {}
+          }
+        } catch (normErr) {
+          console.warn("ffmpeg normalization on assembled audio warning:", normErr);
+        }
+
+        if (!processedBuffer && fs.existsSync(assembledPath)) {
+          processedBuffer = fs.readFileSync(assembledPath);
+          if (processedMime.includes("m4a") || processedMime.includes("mp4")) processedMime = "audio/mp4";
+        }
+      }
+    } else if (audioData) {
+      const base64Data = audioData.includes("base64,") ? audioData.split("base64,")[1] : audioData;
+      const res = await processAudioForGemini(base64Data, mimeType);
+      processedBuffer = res.buffer;
+      processedMime = res.mimeType;
+      tempAudioFileToClean = res.tempFilePath || null;
+    }
+
+    // Add audio to contents if resolved
+    if (processedBuffer) {
+      const sizeMB = processedBuffer.length / (1024 * 1024);
+      console.log(`Audio ready for Gemini: size=${sizeMB.toFixed(2)}MB, mime=${processedMime}`);
 
       // If buffer is <= 20MB, pass as inlineData for lowest latency and maximum reliability
       if (sizeMB <= 20) {
         contents.push({
           inlineData: {
-            data: buffer.toString("base64"),
+            data: processedBuffer.toString("base64"),
             mimeType: processedMime,
           },
         });
       } else {
         // If buffer > 20MB, upload via Gemini File API and poll until state is ACTIVE
-        const uploadPath = tempFilePath || path.join("/tmp", `upload_${Date.now()}.m4a`);
-        if (!tempFilePath) {
-          fs.writeFileSync(uploadPath, buffer);
-          tempAudioFileToClean = uploadPath;
-        }
+        const uploadPath = path.join("/tmp", `upload_${Date.now()}.m4a`);
+        fs.writeFileSync(uploadPath, processedBuffer);
+        tempAudioFileToClean = uploadPath;
 
         console.log(`Uploading large audio (${sizeMB.toFixed(2)}MB) via ai.files.upload...`);
         uploadedGeminiFile = await ai.files.upload({

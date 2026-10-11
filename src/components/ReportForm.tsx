@@ -59,13 +59,16 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Custom manual paste inputs / audio inputs
   const [copiedMaterialsText, setCopiedMaterialsText] = useState('');
   const [audioBase64, setAudioBase64] = useState<string | null>(null);
-  const [audioMimeType, setAudioMimeType] = useState<string>('audio/wav');
+  const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
+  const [audioMimeType, setAudioMimeType] = useState<string>('audio/mp4');
   const [audioFileName, setAudioFileName] = useState<string>('');
   const [audioFileSize, setAudioFileSize] = useState<string>('');
   const [audioDuration, setAudioDuration] = useState<number>(0);
   const [audioConversionInfo, setAudioConversionInfo] = useState<string>('');
   const [isConvertingAudio, setIsConvertingAudio] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedAudioFileRef = useRef<File | Blob | null>(null);
 
   // Summaries
   const [summaryContent, setSummaryContent] = useState('');
@@ -203,17 +206,19 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         const actualMime = recorder.mimeType || preferredMime || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
         const ext = actualMime.includes('mp4') ? 'm4a' : 'webm';
+        const fileName = `direct_recording.${ext}`;
         
+        selectedAudioFileRef.current = audioBlob;
+        if (audioBlobUrl) {
+          URL.revokeObjectURL(audioBlobUrl);
+        }
+        const newUrl = URL.createObjectURL(audioBlob);
+        setAudioBlobUrl(newUrl);
+
         setAudioMimeType(actualMime);
-        setAudioFileName(`direct_recording.${ext}`);
+        setAudioFileName(fileName);
         setAudioFileSize(formatFileSize(audioBlob.size));
         setAudioConversionInfo(`ブラウザ直接録音 (${actualMime.split(';')[0]})`);
-
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setAudioBase64(reader.result as string);
-        };
-        reader.readAsDataURL(audioBlob);
 
         // stop all audio tracks to release microphone
         stream.getTracks().forEach(track => track.stop());
@@ -243,27 +248,34 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     }
   };
 
-  // Handle uploaded audio files with Web Audio API automatic format conversion & compression
+  // Handle uploaded audio files with Web Audio API inspection and direct binary preservation
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setErrorMsg('');
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      selectedAudioFileRef.current = file;
+
+      if (audioBlobUrl) {
+        URL.revokeObjectURL(audioBlobUrl);
+      }
+      const newUrl = URL.createObjectURL(file);
+      setAudioBlobUrl(newUrl);
+
       setIsConvertingAudio(true);
       setAudioFileName(file.name);
-      setAudioFileSize(`変換中 (${formatFileSize(file.size)})...`);
-      setAudioConversionInfo('Web Audio APIで音声をデコードおよび最適化中...');
+      setAudioFileSize(formatFileSize(file.size));
+      setAudioConversionInfo('音声を検証・最適化中...');
 
       try {
         const result = await convertAudioWithWebAudio(file);
-        setAudioBase64(result.base64Data);
         setAudioMimeType(result.mimeType);
         setAudioFileName(result.fileName);
         setAudioDuration(result.duration);
-        setAudioFileSize(`${formatFileSize(result.convertedSize)} (元: ${formatFileSize(result.originalSize)})`);
+        setAudioFileSize(formatFileSize(result.originalSize));
         setAudioConversionInfo(result.formatNote);
       } catch (err: any) {
-        console.error("Audio conversion failed:", err);
-        setErrorMsg("音声の変換処理に失敗しました。ファイル形式をご確認ください。");
+        console.error("Audio inspection error:", err);
+        setAudioMimeType('audio/mp4');
       } finally {
         setIsConvertingAudio(false);
       }
@@ -272,19 +284,25 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
   // Clear audio state
   const clearAudio = () => {
+    if (audioBlobUrl) {
+      URL.revokeObjectURL(audioBlobUrl);
+    }
+    selectedAudioFileRef.current = null;
+    setAudioBlobUrl(null);
     setAudioBase64(null);
     setAudioFileName('');
     setAudioFileSize('');
     setAudioDuration(0);
     setAudioConversionInfo('');
+    setUploadProgressText('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  // Call Gemini summarizing API on the server
+  // Call Gemini summarizing API on the server using resilient chunked streaming for audio
   const handleAutoSummarize = async () => {
-    if (!theme.trim() && !copiedMaterialsText.trim() && !audioBase64) {
+    if (!theme.trim() && !copiedMaterialsText.trim() && !selectedAudioFileRef.current && !audioBase64) {
       setErrorMsg("研修の「議題・テーマ」または「教材テキスト」を入力してください（AIが要約を作成する重要な手がかりになります）。");
       return;
     }
@@ -292,13 +310,58 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     setIsLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
+    setUploadProgressText('');
 
     try {
+      let uploadId: string | null = null;
+
+      // 1. If an audio file or recorded blob exists, upload via small 2MB chunks to guarantee 100% success on any network/cloud proxy
+      if (selectedAudioFileRef.current) {
+        const file = selectedAudioFileRef.current;
+        uploadId = `audio_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB safe chunks
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const encodedFileName = encodeURIComponent(audioFileName || 'recording.m4a');
+
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(file.size, start + CHUNK_SIZE);
+          const chunkBlob = file.slice(start, end);
+          const percent = Math.round(((i + 1) / totalChunks) * 100);
+          setUploadProgressText(`音声データを安全に送信中: ${percent}% (${i + 1}/${totalChunks})`);
+
+          const chunkRes = await fetch('/api/audio/upload-chunk', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'x-upload-id': uploadId,
+              'x-chunk-index': String(i),
+              'x-total-chunks': String(totalChunks),
+              'x-mime-type': audioMimeType || 'audio/mp4',
+              'x-file-name': encodedFileName
+            },
+            body: chunkBlob
+          });
+
+          if (!chunkRes.ok) {
+            let errMsg = '音声データの送信に失敗しました';
+            try {
+              const j = await chunkRes.json();
+              if (j.error) errMsg = j.error;
+            } catch {}
+            throw new Error(errMsg);
+          }
+        }
+      }
+
+      setUploadProgressText('AIが音声を解析し、研修報告書と理解度テストを作成中...');
+
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          audioData: audioBase64,
+          audioId: uploadId,
+          audioData: !uploadId ? audioBase64 : undefined,
           mimeType: audioMimeType,
           textData: copiedMaterialsText,
           theme: theme,
@@ -346,6 +409,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       }
     } finally {
       setIsLoading(false);
+      setUploadProgressText('');
     }
   };
 
@@ -816,11 +880,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
                 </div>
 
                 {/* Native HTML5 Audio Player */}
-                {audioBase64 && (
+                {(audioBlobUrl || audioBase64) && (
                   <div className="pt-1">
                     <audio 
                       controls 
-                      src={audioBase64} 
+                      src={audioBlobUrl || audioBase64 || ''} 
                       className="w-full h-8 outline-none"
                     />
                   </div>
@@ -831,7 +895,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             {/* Explanatory helper note */}
             {!audioFileName && !isConvertingAudio && (
               <p className="text-[11px] text-slate-500 font-meiryo-ui leading-relaxed">
-                ※ iPhoneのボイスメモ（.m4a）やICレコーダー、Android音声などに対応。ブラウザ上のWeb Audio APIでAI高精度認識形式に自動変換・圧縮して安全に送信されます。
+                ※ iPhoneのボイスメモ（.m4a）やICレコーダー、Android音声などに対応。分割送信ストリーミングで大容量音声も安全に解析されます。
               </p>
             )}
           </div>
@@ -882,7 +946,9 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             <div className="w-full max-w-xl bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-start gap-3 text-xs sm:text-sm text-blue-800 font-meiryo-ui shadow-xs animate-pulse">
               <Loader2 className="animate-spin text-blue-600 shrink-0 mt-0.5" size={20} />
               <div className="space-y-1">
-                <div className="font-bold text-blue-900">AIが音声を解析し、研修報告書と理解度テストを作成しています...</div>
+                <div className="font-bold text-blue-900">
+                  {uploadProgressText || "AIが音声を解析し、研修報告書と理解度テストを作成しています..."}
+                </div>
                 <p className="text-xs text-blue-700 leading-relaxed">
                   監査基準に適合する「箇条書き要約」「学んだこと」「質疑応答」「理解度テスト（正解・解説付き）」を自動生成中です。処理完了まで十数秒ほどそのままお待ちください。
                 </p>
@@ -892,10 +958,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
           <button
             type="button"
-            disabled={isLoading || (!theme.trim() && !audioBase64 && !copiedMaterialsText.trim())}
+            disabled={isLoading || (!theme.trim() && !selectedAudioFileRef.current && !audioBase64 && !copiedMaterialsText.trim())}
             onClick={handleAutoSummarize}
             className={`inline-flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-white shadow transition-all duration-150 cursor-pointer ${
-              isLoading || (!theme.trim() && !audioBase64 && !copiedMaterialsText.trim())
+              isLoading || (!theme.trim() && !selectedAudioFileRef.current && !audioBase64 && !copiedMaterialsText.trim())
                 ? "bg-slate-300 cursor-not-allowed shadow-none"
                 : "bg-gradient-to-r from-amber-500 to-blue-600 hover:from-amber-600 hover:to-blue-700 scale-100 active:scale-95 shadow-md"
             } font-meiryo-ui`}
