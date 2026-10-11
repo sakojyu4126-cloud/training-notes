@@ -23,8 +23,11 @@ import {
   AlertCircle,
   Undo,
   CheckCircle2,
-  RotateCw
+  RotateCw,
+  Loader2,
+  Volume2
 } from 'lucide-react';
+import { convertAudioWithWebAudio, formatFileSize, formatAudioDuration } from '../utils/audioConverter';
 
 interface ReportFormProps {
   initialReport?: TrainingReport | null;
@@ -56,8 +59,13 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Custom manual paste inputs / audio inputs
   const [copiedMaterialsText, setCopiedMaterialsText] = useState('');
   const [audioBase64, setAudioBase64] = useState<string | null>(null);
-  const [audioMimeType, setAudioMimeType] = useState<string>('audio/mp3');
+  const [audioMimeType, setAudioMimeType] = useState<string>('audio/wav');
   const [audioFileName, setAudioFileName] = useState<string>('');
+  const [audioFileSize, setAudioFileSize] = useState<string>('');
+  const [audioDuration, setAudioDuration] = useState<number>(0);
+  const [audioConversionInfo, setAudioConversionInfo] = useState<string>('');
+  const [isConvertingAudio, setIsConvertingAudio] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Summaries
   const [summaryContent, setSummaryContent] = useState('');
@@ -171,7 +179,18 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
       
-      const recorder = new MediaRecorder(stream);
+      // Determine optimal audio mime type supported by this browser
+      const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+
+      const recorder = preferredMime 
+        ? new MediaRecorder(stream, { mimeType: preferredMime }) 
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
@@ -181,9 +200,14 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       };
 
       recorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/mp3' });
-        setAudioMimeType('audio/mp3');
-        setAudioFileName('direct_microphone_recording.mp3');
+        const actualMime = recorder.mimeType || preferredMime || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+        const ext = actualMime.includes('mp4') ? 'm4a' : 'webm';
+        
+        setAudioMimeType(actualMime);
+        setAudioFileName(`direct_recording.${ext}`);
+        setAudioFileSize(formatFileSize(audioBlob.size));
+        setAudioConversionInfo(`ブラウザ直接録音 (${actualMime.split(';')[0]})`);
 
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -219,19 +243,42 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     }
   };
 
-  // Handle uploaded audio files
-  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle uploaded audio files with Web Audio API automatic format conversion & compression
+  const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setErrorMsg('');
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      setIsConvertingAudio(true);
       setAudioFileName(file.name);
-      setAudioMimeType(file.type || 'audio/mp3');
+      setAudioFileSize(`変換中 (${formatFileSize(file.size)})...`);
+      setAudioConversionInfo('Web Audio APIで音声をデコードおよび最適化中...');
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAudioBase64(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const result = await convertAudioWithWebAudio(file);
+        setAudioBase64(result.base64Data);
+        setAudioMimeType(result.mimeType);
+        setAudioFileName(result.fileName);
+        setAudioDuration(result.duration);
+        setAudioFileSize(`${formatFileSize(result.convertedSize)} (元: ${formatFileSize(result.originalSize)})`);
+        setAudioConversionInfo(result.formatNote);
+      } catch (err: any) {
+        console.error("Audio conversion failed:", err);
+        setErrorMsg("音声の変換処理に失敗しました。ファイル形式をご確認ください。");
+      } finally {
+        setIsConvertingAudio(false);
+      }
+    }
+  };
+
+  // Clear audio state
+  const clearAudio = () => {
+    setAudioBase64(null);
+    setAudioFileName('');
+    setAudioFileSize('');
+    setAudioDuration(0);
+    setAudioConversionInfo('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -643,64 +690,124 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Audio Data section */}
-          <div className="space-y-4">
-            <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui">研修音声の取り込み</h4>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1.5">
+                <Volume2 size={14} className="text-blue-600" />
+                研修音声の取り込み（M4A・スマホ録音対応）
+              </h4>
+              <span className="text-[11px] text-slate-500 font-meiryo-ui">Web Audio API自動最適化</span>
+            </div>
             
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               {/* Direct Record Button */}
               {!isRecording ? (
                 <button
                   type="button"
                   onClick={startRecording}
-                  className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition shadow-sm font-meiryo-ui"
+                  disabled={isConvertingAudio}
+                  className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3.5 py-2 rounded-lg text-xs font-medium transition shadow-sm font-meiryo-ui cursor-pointer disabled:opacity-50"
                 >
-                  <Mic size={16} />
+                  <Mic size={15} />
                   直接録音を開始
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={stopRecording}
-                  className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition animate-pulse font-meiryo-ui"
+                  className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-3.5 py-2 rounded-lg text-xs font-medium transition animate-pulse font-meiryo-ui cursor-pointer"
                 >
-                  <Square size={16} />
+                  <Square size={15} />
                   録音停止 ({formatTime(recordingSeconds)})
                 </button>
               )}
 
-              {/* Upload audio file (supports iPhone, Android, etc.) */}
-              <label className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm border border-slate-300 transition cursor-pointer font-meiryo-ui shadow-sm">
-                <Upload size={16} className="text-slate-500" />
-                音声ファイルを選択
+              {/* Upload audio file (supports iPhone .m4a, Android, mp3, wav, etc.) */}
+              <label className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 px-3.5 py-2 rounded-lg text-xs font-medium border border-slate-300 transition cursor-pointer font-meiryo-ui shadow-sm">
+                <Upload size={15} className="text-slate-500" />
+                音声ファイルを選択 (.m4a, .mp3, .wav等)
                 <input 
+                  ref={fileInputRef}
                   type="file" 
-                  accept="audio/*,video/*" 
+                  accept="audio/*,video/*,.m4a,.mp3,.wav,.aac,.webm,.ogg,.mp4,.mov,audio/mp4,audio/x-m4a" 
                   onChange={handleAudioUpload} 
                   className="hidden" 
                 />
               </label>
             </div>
 
-            {/* Audio Preview status */}
-            {audioFileName && (
-              <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs flex items-center justify-between font-meiryo-ui">
-                <div className="flex items-center gap-2 text-slate-600 truncate">
-                  <FileText size={14} className="text-blue-600 shrink-0" />
-                  <span className="font-semibold text-slate-800 truncate">{audioFileName}</span>
-                  <span className="text-slate-400">({(audioMimeType || 'audio').split('/')[1]})</span>
+            {/* Converting state indicator */}
+            {isConvertingAudio && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 flex items-center gap-3 animate-pulse font-meiryo-ui">
+                <Loader2 size={18} className="animate-spin text-blue-600 shrink-0" />
+                <div>
+                  <div className="font-bold">Web Audio APIで音声を最適化変換中...</div>
+                  <div className="text-[11px] text-blue-600 mt-0.5">
+                    M4A/AAC音声データをデコードし、AI認識に最適な16kHz音声形式へブラウザ内で自動変換しています
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAudioBase64(null);
-                    setAudioFileName('');
-                  }}
-                  className="text-rose-500 hover:text-rose-600 font-bold px-1 cursor-pointer"
-                  title="削除"
-                >
-                  取り消し
-                </button>
               </div>
+            )}
+
+            {/* Audio Preview & Status */}
+            {!isConvertingAudio && audioFileName && (
+              <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs font-meiryo-ui shadow-xs space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-slate-700 truncate min-w-0">
+                    <FileText size={15} className="text-blue-600 shrink-0" />
+                    <span className="font-bold text-slate-800 truncate">{audioFileName}</span>
+                    {audioDuration > 0 && (
+                      <span className="shrink-0 text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                        {formatAudioDuration(audioDuration)}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearAudio}
+                    className="text-rose-600 hover:text-rose-700 font-bold px-1.5 py-0.5 text-xs rounded hover:bg-rose-50 cursor-pointer shrink-0 transition"
+                    title="音声を取り消す"
+                  >
+                    取り消し
+                  </button>
+                </div>
+
+                {/* Conversion badges and specs */}
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-medium">
+                    <CheckCircle2 size={12} className="text-emerald-600" />
+                    AI対応形式へ自動変換済
+                  </span>
+                  {audioFileSize && (
+                    <span className="text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">
+                      サイズ: {audioFileSize}
+                    </span>
+                  )}
+                  {audioConversionInfo && (
+                    <span className="text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                      {audioConversionInfo}
+                    </span>
+                  )}
+                </div>
+
+                {/* Native HTML5 Audio Player */}
+                {audioBase64 && (
+                  <div className="pt-1">
+                    <audio 
+                      controls 
+                      src={audioBase64} 
+                      className="w-full h-8 outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Explanatory helper note */}
+            {!audioFileName && !isConvertingAudio && (
+              <p className="text-[11px] text-slate-500 font-meiryo-ui leading-relaxed">
+                ※ iPhoneのボイスメモ（.m4a）やICレコーダー、Android音声などに対応。ブラウザ上のWeb Audio APIでAI高精度認識形式に自動変換・圧縮して安全に送信されます。
+              </p>
             )}
           </div>
 

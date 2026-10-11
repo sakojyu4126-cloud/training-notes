@@ -6,18 +6,22 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+
+const execAsync = promisify(exec);
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-// Set up JSON body parser with increased limit to support large audio base64 uploads
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Set up JSON body parser with increased limit to support large audio base64 uploads (up to 100MB)
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "reports.json");
@@ -308,8 +312,70 @@ app.delete("/api/reports/:id", (req, res) => {
   }
 });
 
+// Helper to process uploaded audio with ffmpeg to ensure valid, speech-optimized standard AAC/m4a
+async function processAudioForGemini(
+  base64Data: string,
+  rawMimeType: string
+): Promise<{
+  buffer: Buffer;
+  mimeType: string;
+  tempFilePath?: string;
+}> {
+  const inputBuffer = Buffer.from(base64Data, "base64");
+  const tempId = `audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
+  // Normalize incoming MIME
+  const cleanMime = (rawMimeType || "audio/mp4").split(";")[0].trim().toLowerCase();
+  let inExt = ".tmp";
+  if (cleanMime.includes("wav")) inExt = ".wav";
+  else if (cleanMime.includes("webm")) inExt = ".webm";
+  else if (cleanMime.includes("mp4") || cleanMime.includes("m4a")) inExt = ".m4a";
+  else if (cleanMime.includes("mp3") || cleanMime.includes("mpeg")) inExt = ".mp3";
+  else if (cleanMime.includes("ogg")) inExt = ".ogg";
+
+  const inputPath = path.join("/tmp", `${tempId}_in${inExt}`);
+  const outputPath = path.join("/tmp", `${tempId}_out.m4a`);
+
+  try {
+    fs.writeFileSync(inputPath, inputBuffer);
+
+    // Convert and compress to speech-optimized 16kHz mono AAC (compatible with all Gemini models)
+    // 32kbps mono AAC preserves crystal-clear speech fidelity while keeping payload small
+    await execAsync(`ffmpeg -i "${inputPath}" -vn -ac 1 -ar 16000 -c:a aac -b:a 32k "${outputPath}" -y 2>/dev/null`);
+
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+      const outputBuffer = fs.readFileSync(outputPath);
+      try { fs.unlinkSync(inputPath); } catch {}
+      return {
+        buffer: outputBuffer,
+        mimeType: "audio/mp4",
+        tempFilePath: outputPath,
+      };
+    }
+  } catch (err) {
+    console.warn("ffmpeg audio normalization skipped or failed, using original audio buffer:", err);
+  } finally {
+    try {
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    } catch {}
+  }
+
+  // Fallback to original buffer with normalized MIME
+  let normalizedMime = cleanMime || "audio/mp4";
+  if (normalizedMime === "audio/x-m4a" || normalizedMime === "audio/m4a" || normalizedMime.includes("m4a")) {
+    normalizedMime = "audio/mp4";
+  }
+  return {
+    buffer: inputBuffer,
+    mimeType: normalizedMime,
+  };
+}
+
 // API: Summarize Audio or Text and Generate quiz
 app.post("/api/summarize", async (req, res) => {
+  let uploadedGeminiFile: any = null;
+  let tempAudioFileToClean: string | null = null;
+
   try {
     const { audioData, mimeType, textData, theme, officeName } = req.body;
 
@@ -325,16 +391,44 @@ app.post("/api/summarize", async (req, res) => {
     // Prepare multi-modal inputs for Gemini
     const contents: any[] = [];
 
-    // Add audio inlineData if provided
+    // Add audio if provided (supporting .m4a, iPhone voice memo, mp3, wav, etc.)
     if (audioData) {
-      // Remove possible data:audio/mp3;base64, header prefix if sent
       const base64Data = audioData.includes("base64,") ? audioData.split("base64,")[1] : audioData;
-      contents.push({
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType || "audio/mp3",
-        },
-      });
+      const { buffer, mimeType: processedMime, tempFilePath } = await processAudioForGemini(base64Data, mimeType);
+      tempAudioFileToClean = tempFilePath || null;
+
+      const sizeMB = buffer.length / (1024 * 1024);
+      console.log(`Audio processed successfully: size=${sizeMB.toFixed(2)}MB, mime=${processedMime}`);
+
+      // If buffer is <= 10MB, pass as inlineData for lowest latency
+      if (sizeMB <= 10) {
+        contents.push({
+          inlineData: {
+            data: buffer.toString("base64"),
+            mimeType: processedMime,
+          },
+        });
+      } else {
+        // If buffer > 10MB, upload via Gemini File API
+        const uploadPath = tempFilePath || path.join("/tmp", `upload_${Date.now()}.m4a`);
+        if (!tempFilePath) {
+          fs.writeFileSync(uploadPath, buffer);
+          tempAudioFileToClean = uploadPath;
+        }
+
+        console.log(`Uploading large audio (${sizeMB.toFixed(2)}MB) via ai.files.upload...`);
+        uploadedGeminiFile = await ai.files.upload({
+          file: uploadPath,
+          config: { mimeType: processedMime }
+        });
+
+        contents.push({
+          fileData: {
+            fileUri: uploadedGeminiFile.uri,
+            mimeType: uploadedGeminiFile.mimeType || processedMime,
+          }
+        });
+      }
     }
 
     // Prepare robust prompt for summarizing and generating Japanese audit-ready minutes & tests
@@ -509,7 +603,38 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
 
   } catch (err: any) {
     console.error("Gemini summarizing error:", err);
-    res.status(500).json({ success: false, error: err.message || "予期せぬエラーが発生しました。" });
+    const msg = err?.message || String(err);
+    if (msg.includes("413") || msg.includes("too large") || msg.includes("Payload Too Large")) {
+      res.status(400).json({ 
+        success: false, 
+        error: "音声ファイルのデータ容量が大きすぎます。時間を短くするか、教材テキスト貼り付けもお試しください。" 
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: err.message || "AI自動生成の処理中に一時的なエラーが発生しました。再度お試しください。" 
+      });
+    }
+  } finally {
+    // Clean up temporary local files
+    if (tempAudioFileToClean) {
+      try {
+        if (fs.existsSync(tempAudioFileToClean)) {
+          fs.unlinkSync(tempAudioFileToClean);
+        }
+      } catch (e) {
+        console.warn("Failed to clean up local temp audio file:", e);
+      }
+    }
+    // Clean up uploaded file on Gemini File API
+    if (uploadedGeminiFile && uploadedGeminiFile.name) {
+      try {
+        const ai = getGeminiClient();
+        await ai.files.delete({ name: uploadedGeminiFile.name });
+      } catch (e) {
+        console.warn("Failed to delete Gemini uploaded file:", e);
+      }
+    }
   }
 });
 
