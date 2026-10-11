@@ -152,7 +152,6 @@ export default function Dashboard({
           <h2 className="text-xl font-bold text-slate-800 font-hgs-gothic">研修報告書・議事録 一覧</h2>
           <p className="text-xs sm:text-sm text-slate-500 font-meiryo-ui mt-1">
             全 <span className="font-bold text-blue-600">{reports.length}</span> 件の法定研修が記録されています。
-            （ローカル保存・復元対応 / 1日5万回の無料枠内で安全稼働）
           </p>
         </div>
         
@@ -364,6 +363,11 @@ export default function Dashboard({
                         <Building2 size={12} className="shrink-0 no-print" />
                         {report.officeName}
                       </span>
+                      {report.jointOfficeName && report.jointOfficeName !== 'なし' && (
+                        <span className="block text-[10px] text-slate-500 font-normal mt-0.5 print:text-black">
+                          合同: {report.jointOfficeName}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-3 text-center whitespace-nowrap text-slate-600 print:text-black font-mono">
                       {report.trainingDate}

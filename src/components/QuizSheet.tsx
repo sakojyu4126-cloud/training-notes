@@ -83,18 +83,7 @@ export default function QuizSheet({ report, onClose }: QuizSheetProps) {
       </div>
 
       {/* Interactive Mode Stats Panel - Hidden on Print */}
-      {!isSubmitted ? (
-        <div className="no-print bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <AlertCircle className="text-amber-500 shrink-0 mt-0.5" size={18} />
-          <div>
-            <h4 className="text-xs font-bold text-amber-800 font-hgs-gothic">画面上でテストに挑戦できます</h4>
-            <p className="text-xs text-amber-700 font-meiryo-ui mt-1">
-              下の設問に解答をマークし、「採点する」ボタンをクリックすると、即座に採点と詳細解説が行われます。
-              印刷の際は、右上の「解答・解説を表示」トグルでお手本の赤ペン解答（模範解答）の有無を切り替えてから印刷してください。
-            </p>
-          </div>
-        </div>
-      ) : (
+      {isSubmitted && (
         <div className="no-print bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={20} />

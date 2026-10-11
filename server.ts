@@ -32,6 +32,8 @@ const SEED_REPORTS = [
   {
     id: "seed-1",
     officeName: "ヘルパーステーション桃の郷 京都東山",
+    jointOfficeName: "デイサービス桃の郷 京都東山",
+    jointAttendees: "木村 健太、野村 幸子",
     trainingDate: "2026-06-15",
     trainingTimeStart: "14:00",
     trainingTimeEnd: "15:00",
@@ -433,8 +435,8 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
       }
     };
 
-    // Candidates: primary fast & stable gemini-3.1-flash-lite, with gemini-3.8-flash fallback
-    const candidateModels = ["gemini-3.1-flash-lite", "gemini-3.8-flash"];
+    // Candidates: primary fast & stable gemini-3.5-flash-lite, with gemini-3.1-flash-lite and gemini-3.8-flash fallbacks
+    const candidateModels = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
     let lastError: any = null;
     let response: any = null;
 
@@ -475,16 +477,31 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
       throw new Error("AI自動要約の生成に失敗しました。再度お試しください。");
     }
 
-    const summaryResult = JSON.parse(response.text.trim());
+    let rawText = response.text.trim();
+    // Strip markdown code fences if model enclosed JSON in ```json ... ```
+    if (rawText.startsWith("```json")) {
+      rawText = rawText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (rawText.startsWith("```")) {
+      rawText = rawText.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+
+    // Extract outermost JSON block if any extra text exists
+    const firstBrace = rawText.indexOf("{");
+    const lastBrace = rawText.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      rawText = rawText.substring(firstBrace, lastBrace + 1);
+    }
+
+    const summaryResult = JSON.parse(rawText.trim());
 
     res.json({
       success: true,
       summary: {
-        content: summaryResult.content,
-        learned: summaryResult.learned,
-        challenges: summaryResult.challenges,
+        content: summaryResult.content || "",
+        learned: summaryResult.learned || "",
+        challenges: summaryResult.challenges || "",
       },
-      quizQuestions: summaryResult.quiz.map((q: any, i: number) => ({
+      quizQuestions: (summaryResult.quiz || []).map((q: any, i: number) => ({
         id: `gen-${Date.now()}-${i}`,
         ...q
       }))

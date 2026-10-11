@@ -36,6 +36,8 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Form values
   const [id, setId] = useState('');
   const [officeName, setOfficeName] = useState('ヘルパーステーション桃の郷 京都東山');
+  const [jointOfficeName, setJointOfficeName] = useState('なし');
+  const [jointAttendees, setJointAttendees] = useState('');
   const [trainingDate, setTrainingDate] = useState('');
   const [trainingTimeStart, setTrainingTimeStart] = useState('14:00');
   const [trainingTimeEnd, setTrainingTimeEnd] = useState('15:00');
@@ -83,6 +85,8 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     if (initialReport) {
       setId(initialReport.id);
       setOfficeName(initialReport.officeName);
+      setJointOfficeName(initialReport.jointOfficeName || 'なし');
+      setJointAttendees(initialReport.jointAttendees || '');
       setTrainingDate(initialReport.trainingDate);
       setTrainingTimeStart(initialReport.trainingTimeStart);
       setTrainingTimeEnd(initialReport.trainingTimeEnd);
@@ -104,6 +108,8 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     } else {
       setId('');
       setOfficeName('ヘルパーステーション桃の郷 京都東山');
+      setJointOfficeName('なし');
+      setJointAttendees('');
       setTrainingDate(todayStr);
       setTrainingTimeStart('14:00');
       setTrainingTimeEnd('15:00');
@@ -282,6 +288,8 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     const report: TrainingReport = {
       id: id || "report-" + Date.now(),
       officeName,
+      jointOfficeName,
+      jointAttendees,
       trainingDate,
       trainingTimeStart,
       trainingTimeEnd,
@@ -346,9 +354,6 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           <h2 className="text-xl font-bold text-slate-800 font-hgs-gothic">
             {initialReport ? '研修報告書の編集' : '新規研修報告書・議事録の作成'}
           </h2>
-          <p className="text-xs text-slate-500 font-meiryo-ui mt-1">
-            音声データや研修資料テキストを取り込んで、行政監査に対応可能な報告書と理解度テストを自動生成します。
-          </p>
         </div>
         <div className="flex gap-2">
           <button
@@ -381,7 +386,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 事業所名（都度選択可能） */}
+          {/* 事業所名（一番左上） */}
           <div>
             <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
               <Building2 size={14} className="text-blue-600" />
@@ -407,9 +412,42 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             <input
               type="text"
               required
-              placeholder="例：個人情報保護・守秘義務研修"
+              placeholder="例：高齢者虐待防止・権利擁護研修"
               value={theme}
               onChange={(e) => setTheme(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-meiryo-ui"
+            />
+          </div>
+
+          {/* 事業所名の下段：合同研修の事業所名（3つの事業所から追加があればプルダウン選択） */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
+              <Building2 size={14} className="text-slate-600" />
+              合同研修の事業所名
+            </label>
+            <select
+              value={jointOfficeName}
+              onChange={(e) => setJointOfficeName(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-meiryo-ui"
+            >
+              <option value="なし">なし（単独開催）</option>
+              <option value="ヘルパーステーション桃の郷 京都東山">ヘルパーステーション桃の郷 京都東山</option>
+              <option value="デイサービス桃の郷 京都東山">デイサービス桃の郷 京都東山</option>
+              <option value="サービス付高齢者向け住宅　桃の郷京都東山">サービス付高齢者向け住宅　桃の郷京都東山</option>
+            </select>
+          </div>
+
+          {/* 同じ行の右隣：受講者名（合同事業所からの受講者名） */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
+              <User size={14} className="text-slate-600" />
+              受講者名（合同事業所の参加者）
+            </label>
+            <input
+              type="text"
+              placeholder="例：合同参加者のお名前を入力（監査対応）"
+              value={jointAttendees}
+              onChange={(e) => setJointAttendees(e.target.value)}
               className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-meiryo-ui"
             />
           </div>
@@ -521,11 +559,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         <div>
           <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
             <FileText size={14} className="text-blue-600" />
-            使用教材・資料 （EラーニングやYouTubeのURLも含めてご記入ください）
+            使用教材・資料
           </label>
           <input
             type="text"
-            placeholder="例：厚生労働省「虐待防止ガイドライン」、YouTube: 介護の尊厳を守る研修動画"
+            placeholder="例：厚生労働省「虐待防止ガイドライン」、研修資料レジュメ"
             value={materials}
             onChange={(e) => setMaterials(e.target.value)}
             className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-meiryo-ui"
@@ -544,7 +582,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1">
-                受講者名（お名前を入力してください。読点「、」や改行で区切ると自動カウントされます）
+                受講者名
               </label>
               <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold font-meiryo-ui">
                 受講数: {attendeesCount} 名
@@ -599,17 +637,14 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         <div>
           <h3 className="text-sm font-bold text-slate-800 font-hgs-gothic flex items-center gap-2">
             <Sparkles size={16} className="text-amber-500" />
-            3. AI議事録・要約・理解度テスト生成（安心安全・ボタン押下時1回のみ呼び出し）
+            3. AI議事録・要約・理解度テスト生成
           </h3>
-          <p className="text-xs text-slate-500 font-meiryo-ui mt-1">
-            教材テキスト（PDF・Word・Excel等のコピペ）や、録音音声を取り込んで「AIで要約 ＆ 理解度テストを自動生成」をクリックしてください。
-          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Audio Data section */}
           <div className="space-y-4">
-            <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui">【A】研修音声の取り込み（直接録音 ＆ ファイルインポート）</h4>
+            <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui">研修音声の取り込み</h4>
             
             <div className="flex flex-wrap items-center gap-3">
               {/* Direct Record Button */}
@@ -672,7 +707,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           {/* Copy-paste manuals section */}
           <div className="space-y-2">
             <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1">
-              【B】研修資料テキスト（PDF、Excel、Word、WEB等のコピー＆ペースト）
+              研修資料テキスト
             </h4>
             <textarea
               placeholder="教材、レジュメ、スライド資料、またはEラーニングの文章、ニュース記事などをここに貼り付けてください。"
@@ -724,16 +759,6 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             <Cpu size={18} className={isLoading ? "animate-spin" : ""} />
             {isLoading ? "AIが解析・要約・理解度テスト生成中..." : "AIで要約 ＆ 理解度テストを自動生成"}
           </button>
-
-          <div className="space-y-1 text-center">
-            <p className="text-[11px] text-emerald-700 font-medium font-meiryo-ui flex items-center justify-center gap-1">
-              <CheckCircle2 size={13} className="text-emerald-600" />
-              <span>Google AI Studio連携完了済（追加のAPIキー設定や課金手続きは一切不要・無料枠稼働中）</span>
-            </p>
-            <p className="text-[11px] text-slate-500 font-meiryo-ui">
-              ※AI呼び出しはボタンクリック時の1回のみ実行されます（自動ループやピンポン呼び出し等の無駄な通信は一切行わず、1日5万回までの無料枠内で安全にご利用いただけます）。
-            </p>
-          </div>
         </div>
       </div>
 
@@ -743,10 +768,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           4. 研修結果の要約（自動入力 ＆ カスタマイズ）
         </h3>
 
-        {/* ① 研修内容 (UD デジタル 教科書体 NK) */}
+        {/* ① 研修内容 */}
         <div>
           <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
-            ①研修内容（UD デジタル 教科書体 NKで表示されます。手動修正も可能です）
+            ①研修内容
           </label>
           <textarea
             placeholder="AIで要約、または手入力してください。監査において最も重要視される部分です。"

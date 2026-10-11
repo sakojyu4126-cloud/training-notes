@@ -173,16 +173,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Server connection indicator */}
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-meiryo-ui ${
-              serverConnected 
-                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-            }`}>
-              {serverConnected ? <Cloud size={13} /> : <CloudOff size={13} />}
-              {serverConnected ? "サーバー同期中" : "ローカル作動中"}
-            </span>
-
             <span className="hidden sm:inline-flex w-10 h-10 rounded-full bg-slate-700 border border-slate-600 items-center justify-center text-xs font-medium text-slate-200">
               管理
             </span>

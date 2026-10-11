@@ -21,6 +21,8 @@ export interface TrainingSummary {
 export interface TrainingReport {
   id: string;
   officeName: string; // ヘルパーステーション桃の郷 京都東山, デイサービス桃の郷 京都東山, サービス付高齢者向け住宅 桃の郷京都東山
+  jointOfficeName?: string; // 合同研修の事業所名（3事業所から選択、または「なし」）
+  jointAttendees?: string;  // 受講者名（別事業所からの参加受講者）
   trainingDate: string;
   trainingTimeStart: string;
   trainingTimeEnd: string;

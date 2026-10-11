@@ -42,19 +42,52 @@ function formatTimeMeiryo(timeStr: string) {
   return <span className="font-meiryo-ui text-[10pt]">{timeStr}</span>;
 }
 
-// Helper to auto-fit text onto a single line by adjusting font-size dynamically
-function AutoFitText({ text }: { text: string }) {
-  let fontSize = "text-[10pt]";
-  if (text.length > 28) {
-    fontSize = "text-[7pt]";
-  } else if (text.length > 22) {
-    fontSize = "text-[8pt]";
-  } else if (text.length > 16) {
-    fontSize = "text-[9pt]";
+// Helper to auto-fit text onto a single line by adjusting font-size dynamically so no line breaks occur
+function AutoFitSingleLine({ 
+  text, 
+  basePt = 9.5, 
+  minPt = 5,
+  bold = false,
+  className = "" 
+}: { 
+  text: string; 
+  basePt?: number; 
+  minPt?: number;
+  bold?: boolean;
+  className?: string; 
+}) {
+  if (!text || text.trim() === "") {
+    return <span className="font-meiryo-ui text-slate-400 font-normal text-[9pt]">なし</span>;
   }
+
+  const clean = text.trim();
+  const len = clean.length;
+  let pt = basePt;
+
+  // Dynamically calculate font-size so all characters display on a single line
+  if (len > 55) {
+    pt = Math.max(minPt, basePt * 0.44);
+  } else if (len > 42) {
+    pt = Math.max(minPt, basePt * 0.54);
+  } else if (len > 30) {
+    pt = Math.max(minPt, basePt * 0.65);
+  } else if (len > 22) {
+    pt = Math.max(minPt, basePt * 0.76);
+  } else if (len > 15) {
+    pt = Math.max(minPt, basePt * 0.88);
+  }
+
   return (
-    <div className={`whitespace-nowrap overflow-hidden text-ellipsis ${fontSize} leading-none font-bold w-full`}>
-      {text}
+    <div 
+      className={`whitespace-nowrap overflow-hidden flex items-center w-full font-meiryo-ui ${bold ? 'font-bold' : ''} ${className}`}
+      style={{ 
+        fontSize: `${pt}pt`, 
+        lineHeight: 1.15,
+        letterSpacing: len > 24 ? "-0.025em" : "normal"
+      }}
+      title={clean}
+    >
+      {clean}
     </div>
   );
 }
@@ -134,23 +167,39 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 事業所名
               </div>
-              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center font-meiryo-ui text-[10pt] font-bold leading-tight break-words whitespace-normal">
-                {report.officeName}
+              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.officeName} basePt={10} bold={true} />
               </div>
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 開催日
               </div>
-              <div className="col-span-4 px-3 py-1.5 flex items-center">
+              <div className="col-span-4 px-3 py-1.5 flex items-center overflow-hidden whitespace-nowrap">
                 {formatJapaneseEraDate(report.trainingDate)}
               </div>
             </div>
 
-            {/* Row 2: Hours and Location */}
+            {/* Row 2: 合同研修の事業所名 and 受講者名 (事業所名の一番左下段に追加) */}
+            <div className="grid grid-cols-12 border-b border-black">
+              <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center leading-tight">
+                合同研修の事業所名
+              </div>
+              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.jointOfficeName || "なし"} basePt={9.5} />
+              </div>
+              <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
+                受講者名
+              </div>
+              <div className="col-span-4 px-3 py-1.5 flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.jointAttendees || "なし"} basePt={9.5} />
+              </div>
+            </div>
+
+            {/* Row 3: Hours and Location */}
             <div className="grid grid-cols-12 border-b border-black">
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 開催時間
               </div>
-              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center gap-1">
+              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center gap-1 overflow-hidden whitespace-nowrap">
                 {formatTimeMeiryo(report.trainingTimeStart)}
                 <span className="font-meiryo-ui text-[9pt]">～</span>
                 {formatTimeMeiryo(report.trainingTimeEnd)}
@@ -158,76 +207,81 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 開催場所
               </div>
-              <div className="col-span-4 px-3 py-1.5 flex items-center font-meiryo-ui text-[10pt] leading-tight break-words whitespace-normal">
-                {report.location}
+              <div className="col-span-4 px-3 py-1.5 flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.location || "事務所にて"} basePt={9.5} />
               </div>
             </div>
 
-            {/* Row 3: Facilitator and Report Date/Reporter */}
+            {/* Row 4: Facilitator and Report Date/Reporter */}
             <div className="grid grid-cols-12 border-b border-black">
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 講師・進行
               </div>
-              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center font-meiryo-ui text-[10pt]">
-                {report.lecturer}
+              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.lecturer || "-"} basePt={9.5} />
               </div>
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 報告日／報告者
               </div>
-              <div className="col-span-4 px-3 py-1.5 flex items-center font-meiryo-ui text-[10pt] leading-tight break-words whitespace-normal">
-                {report.reportDate ? report.reportDate.replace(/-/g, '/') : ''}　／　{report.reporter}
+              <div className="col-span-4 px-3 py-1.5 flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine 
+                  text={`${report.reportDate ? report.reportDate.replace(/-/g, '/') : ''}　／　${report.reporter || ''}`} 
+                  basePt={9.5} 
+                />
               </div>
             </div>
 
-            {/* Row 4: Theme (Increased height and extra visual prominence) */}
+            {/* Row 5: Theme (Single line auto-fit with visual prominence) */}
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-2 bg-slate-100 px-3 py-2.5 border-r border-black font-bold flex items-center justify-center text-center">
+              <div className="col-span-2 bg-slate-100 px-3 py-2 border-r border-black font-bold flex items-center justify-center text-center">
                 議題・テーマ
               </div>
-              <div className="col-span-10 px-4 py-2.5 font-bold text-[11pt] flex items-center bg-slate-50/30 font-meiryo-ui break-words whitespace-normal">
-                {report.theme}
+              <div className="col-span-10 px-4 py-2 font-bold flex items-center bg-slate-50/30 overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.theme || "-"} basePt={11} bold={true} />
               </div>
             </div>
 
-            {/* Row 5: Materials (Moved here right below Theme, full-width row) */}
+            {/* Row 6: Materials (Single line auto-fit) */}
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-2 bg-slate-50 px-3 py-2 border-r border-black font-bold flex items-center justify-center text-center">
+              <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 使用教材等
               </div>
-              <div className="col-span-10 px-4 py-2 font-meiryo-ui text-xs leading-relaxed break-words whitespace-normal">
-                {report.materials || "なし"}
+              <div className="col-span-10 px-4 py-1.5 flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.materials || "なし"} basePt={9} />
               </div>
             </div>
 
-            {/* Row 6: Attendance Status */}
+            {/* Row 7: Attendance Status */}
             <div className="grid grid-cols-12 border-b border-black">
               <div className="col-span-2 bg-slate-50 px-3 py-2 border-r border-black font-bold flex items-center justify-center text-center">
                 参加状況
               </div>
               <div className="col-span-10 p-2 space-y-1.5">
-                {/* Attendees and Non-attendees list in a 2-column format */}
+                {/* Attendees and Non-attendees list */}
                 <div className="grid grid-cols-12 gap-2 text-[9pt] font-meiryo-ui">
-                  <div className="col-span-6 flex items-start gap-1">
-                    <span className="font-bold shrink-0 text-black">受講 ({report.attendeesCount}名):</span>
-                    <span className="text-slate-800 leading-snug break-words whitespace-normal">{report.attendees || "未入力"}</span>
+                  <div className="col-span-6 flex items-center gap-1 overflow-hidden whitespace-nowrap">
+                    <span className="font-bold shrink-0 text-black">受講 ({report.attendeesCount || 0}名):</span>
+                    <AutoFitSingleLine text={report.attendees || "未入力"} basePt={8.5} />
                   </div>
-                  <div className="col-span-6 flex items-start gap-1 text-slate-700 border-l border-slate-200 pl-2">
-                    <span className="font-bold shrink-0 text-slate-700">未受講 ({report.nonAttendeesCount}名):</span>
-                    <span className="text-slate-600 leading-snug break-words whitespace-normal">{report.nonAttendees || "なし"}</span>
+                  <div className="col-span-6 flex items-center gap-1 text-slate-700 border-l border-slate-200 pl-2 overflow-hidden whitespace-nowrap">
+                    <span className="font-bold shrink-0 text-slate-700">未受講 ({report.nonAttendeesCount || 0}名):</span>
+                    <AutoFitSingleLine text={report.nonAttendees || "なし"} basePt={8.5} />
                   </div>
                 </div>
 
-                {/* Follow-up comments - completely shown with no truncate */}
-                <div className="pt-1.5 border-t border-dashed border-slate-200 flex gap-2 text-[8.5pt]">
+                {/* Follow-up comments */}
+                <div className="pt-1 border-t border-dashed border-slate-200 flex items-center gap-2 overflow-hidden whitespace-nowrap text-[8.5pt]">
                   <span className="font-bold shrink-0 text-slate-600">未受講フォロー:</span>
-                  <span className="font-meiryo-ui italic text-slate-700 leading-snug break-words whitespace-normal">
-                    {report.followUpRecord || "受講者全員出席のため、個別補講等のフォローアップは不要。"}
-                  </span>
+                  <AutoFitSingleLine 
+                    text={report.followUpRecord || "受講者全員出席のため、個別補講等のフォローアップは不要。"} 
+                    basePt={8} 
+                    className="italic text-slate-700"
+                  />
                 </div>
               </div>
             </div>
 
-            {/* Row 7: ① 研修内容 (最小高さ50mm) */}
+            {/* Row 8: ① 研修内容 (最小高さ50mm) */}
             <div className="grid grid-cols-12 border-b border-black min-h-[50mm]">
               <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">①</span>
@@ -238,7 +292,7 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 8: ② 研修を通して学んだこと気づいたこと (最小高さ40mm) */}
+            {/* Row 9: ② 研修を通して学んだこと気づいたこと (最小高さ40mm) */}
             <div className="grid grid-cols-12 border-b border-black min-h-[40mm]">
               <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">②</span>
@@ -251,7 +305,7 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 9: ③ 事業所内での課題・質疑応答 (最小高さ40mm) */}
+            {/* Row 10: ③ 事業所内での課題・質疑応答 (最小高さ40mm) */}
             <div className="grid grid-cols-12 border-b border-black min-h-[40mm]">
               <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">③</span>
@@ -264,7 +318,7 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-             {/* Row 10: Attached Materials checkboxes */}
+             {/* Row 11: Attached Materials checkboxes */}
             <div className="grid grid-cols-12">
               <div className="col-span-2 bg-slate-50 px-3 py-3 border-r border-black font-bold flex items-center justify-center text-center">
                 添付資料
