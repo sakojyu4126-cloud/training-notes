@@ -119,8 +119,11 @@ export default function App() {
 
   // Import JSON backup
   const handleImportBackup = async (importedReports: TrainingReport[]) => {
-    // Save to server if connected
-    let successCount = 0;
+    // 1. Immediately store in local state and localStorage
+    setReports(importedReports);
+    localStorage.setItem('momonosato_reports_cache', JSON.stringify(importedReports));
+
+    // 2. Also sync to backend storage if server is running
     for (const report of importedReports) {
       try {
         await fetch('/api/reports', {
@@ -128,19 +131,9 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(report)
         });
-        successCount++;
       } catch (err) {
         console.warn("Could not save imported report to server:", report.id);
       }
-    }
-
-    // Refresh state
-    if (successCount > 0) {
-      await loadReports();
-    } else {
-      // Local fallback
-      setReports(importedReports);
-      localStorage.setItem('momonosato_reports_cache', JSON.stringify(importedReports));
     }
   };
 

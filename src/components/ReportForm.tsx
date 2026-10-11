@@ -599,10 +599,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         <div>
           <h3 className="text-sm font-bold text-slate-800 font-hgs-gothic flex items-center gap-2">
             <Sparkles size={16} className="text-amber-500" />
-            3. AI自動要約・監査報告書生成エンジン
+            3. AI議事録・要約・理解度テスト生成（安心安全・ボタン押下時1回のみ呼び出し）
           </h3>
           <p className="text-xs text-slate-500 font-meiryo-ui mt-1">
-            Excel、PDF、Wordなどの研修教材を直コピペ、またはスマートフォンからの直接録音・音声ファイルアップロードを行い、「AIで要約＆テスト自動生成」をクリックしてください。
+            教材テキスト（PDF・Word・Excel等のコピペ）や、録音音声を取り込んで「AIで要約 ＆ 理解度テストを自動生成」をクリックしてください。
           </p>
         </div>
 
@@ -685,7 +685,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         </div>
 
         {/* Generate triggers */}
-        <div className="flex justify-center pt-2">
+        <div className="flex flex-col items-center gap-2 pt-2">
           <button
             type="button"
             disabled={isLoading || (!audioBase64 && !copiedMaterialsText.trim())}
@@ -699,6 +699,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             <Cpu size={18} className={isLoading ? "animate-spin" : ""} />
             {isLoading ? "AIが解析・要約・理解度テスト生成中..." : "AIで要約 ＆ 理解度テストを自動生成"}
           </button>
+
+          <p className="text-[11px] text-slate-500 text-center font-meiryo-ui">
+            ※AI呼び出しはボタンクリック時の1回のみ実行されます（自動ループやピンポン呼び出し等の無駄な通信は一切行わず、1日5万回までの無料枠内で安全にご利用いただけます）。
+          </p>
         </div>
       </div>
 

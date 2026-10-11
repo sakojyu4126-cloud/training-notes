@@ -74,4 +74,21 @@
   .page-break {
     page-break-before: always;
   }
+
+  /* List table print styles */
+  .list-print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9pt !important;
+  }
+
+  .list-print-table th,
+  .list-print-table td {
+    border: 1px solid #1e293b !important;
+    padding: 5px 6px !important;
+  }
+
+  .list-print-table tr {
+    page-break-inside: avoid !important;
+  }
 }

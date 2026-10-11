@@ -244,7 +244,7 @@ if (!fs.existsSync(DATA_FILE)) {
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "") {
-    throw new Error("GEMINI_API_KEY environment variable is not configured. Please set up the secret in AI Studio Settings.");
+    throw new Error("Gemini APIキーが未設定です。手入力での研修記録作成や保存・復元・印刷はそのままご利用いただけます。AIによる自動作成機能を利用される場合は、AI StudioのSettingsにて無料枠のAPIキーをご登録ください。");
   }
   return new GoogleGenAI({
     apiKey: apiKey,
@@ -376,7 +376,7 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
     contents.push({ text: userPrompt });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
       contents: contents,
       config: {
         systemInstruction: systemInstruction,
