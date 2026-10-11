@@ -120,15 +120,12 @@ export default function Dashboard({
         try {
           const parsed = JSON.parse(event.target?.result as string);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            if (confirm(`ファイル「${file.name}」から ${parsed.length} 件の研修データを復元しますか？`)) {
-              onImportBackup(parsed);
-              alert(`${parsed.length} 件の研修データを正常に復元・反映しました。`);
-            }
+            onImportBackup(parsed);
           } else {
-            alert("無効なバックアップファイルです。研修データの配列が含まれていません。");
+            console.warn("無効なバックアップファイルです。研修データの配列が含まれていません。");
           }
         } catch (error) {
-          alert("ファイルの解析に失敗しました。正しいJSONファイルを選択してください。");
+          console.error("ファイルの解析に失敗しました。正しいJSONファイルを選択してください。", error);
         }
       };
     }

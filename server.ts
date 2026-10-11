@@ -311,8 +311,11 @@ app.post("/api/summarize", async (req, res) => {
   try {
     const { audioData, mimeType, textData, theme, officeName } = req.body;
 
-    if (!audioData && !textData) {
-      return res.status(400).json({ success: false, error: "音声データまたはテキスト情報の少なくとも一方が必要です。" });
+    if (!audioData && !textData && !theme?.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "研修テーマ、テキスト資料、または音声のいずれかを入力してください。" 
+      });
     }
 
     const ai = getGeminiClient();
@@ -367,7 +370,7 @@ app.post("/api/summarize", async (req, res) => {
 ・事業所名: ${officeName || "ヘルパーステーション桃の郷 京都東山"}
 
 【提供されたインプット資料】
-${textData ? `【テキスト・教材資料 (コピー＆ペースト内容)】:\n${textData}\n` : ""}
+${textData ? `【テキスト・教材資料 (コピー＆ペースト内容)】:\n${textData}\n` : "【テキスト資料】: なし（研修テーマおよび法令・ガイドラインに準拠して標準的な指導項目を作成してください）\n"}
 ${audioData ? `【研修音声/録音】: 音声ファイルが添付されています。音声の内容をテキストとして解析・統合し、対話内容や講義内容を要約に含めてください。\n` : ""}
 
 これらを完全に統合し、①研修内容は【必ず「・」で始まる箇条書き（改行区切り）】に整形した上で、指定のJSONスキーマに従って出力してください。
@@ -375,71 +378,104 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
 
     contents.push({ text: userPrompt });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: contents,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            content: {
-              type: Type.STRING,
-              description: "研修内容の詳細な要約。必ず「・」で始まる簡潔な箇条書き（各項目は改行で区切る）形式で作成してください。監査対応用、客観的で専門的かつ直感的な見やすさを最優先。"
-            },
-            learned: {
-              type: Type.STRING,
-              description: "研修を通して学んだこと、気づいたことの要約（スタッフ目線、業務改善に直結する内容）。"
-            },
-            challenges: {
-              type: Type.STRING,
-              description: "事業所内での課題・質疑応答（Q:質問、A:回答の形式を含めて具体的に記述）。"
-            },
-            quiz: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  type: {
-                    type: Type.STRING,
-                    enum: ["boolean", "choice"],
-                    description: "問題タイプ（boolean: 〇×、choice: 多肢選択）"
-                  },
-                  questionText: {
-                    type: Type.STRING,
-                    description: "問題の本文。研修の重要なコア知識を問う内容。"
-                  },
-                  choices: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    description: "多肢選択肢。typeが'choice'の場合に必須（3〜4つ、例: '1. 〜', '2. 〜' などのプレフィックス付き）。booleanの場合は省略して可。"
-                  },
-                  correctAnswer: {
-                    type: Type.STRING,
-                    description: "正解。booleanなら '〇' または '×'。choiceなら正解 of 選択肢文字列そのもの。"
-                  },
-                  explanation: {
-                    type: Type.STRING,
-                    description: "なぜそれが正解なのか、根拠となる法律やガイドライン、介護基準に言及した懇切丁寧な解説。"
-                  }
-                },
-                required: ["type", "questionText", "correctAnswer", "explanation"]
-              },
-              description: "研修の理解を確認するための理解度テスト（3〜5問）"
-            }
+    const generateConfig = {
+      systemInstruction: systemInstruction,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          content: {
+            type: Type.STRING,
+            description: "研修内容の詳細な要約。必ず「・」で始まる簡潔な箇条書き（各項目は改行で区切る）形式で作成してください。監査対応用、客観的で専門的かつ直感的な見やすさを最優先。"
           },
-          required: ["content", "learned", "challenges", "quiz"]
+          learned: {
+            type: Type.STRING,
+            description: "研修を通して学んだこと、気づいたことの要約（スタッフ目線、業務改善に直結する内容）。"
+          },
+          challenges: {
+            type: Type.STRING,
+            description: "事業所内での課題・質疑応答（Q:質問、A:回答の形式を含めて具体的に記述）。"
+          },
+          quiz: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                type: {
+                  type: Type.STRING,
+                  enum: ["boolean", "choice"],
+                  description: "問題タイプ（boolean: 〇×、choice: 多肢選択）"
+                },
+                questionText: {
+                  type: Type.STRING,
+                  description: "問題の本文。研修の重要なコア知識を問う内容。"
+                },
+                choices: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: "多肢選択肢。typeが'choice'の場合に必須（3〜4つ、例: '1. 〜', '2. 〜' などのプレフィックス付き）。booleanの場合は省略して可。"
+                },
+                correctAnswer: {
+                  type: Type.STRING,
+                  description: "正解。booleanなら '〇' または '×'。choiceなら正解 of 選択肢文字列そのもの。"
+                },
+                explanation: {
+                  type: Type.STRING,
+                  description: "なぜそれが正解なのか、根拠となる法律やガイドライン、介護基準に言及した懇切丁寧な解説。"
+                }
+              },
+              required: ["type", "questionText", "correctAnswer", "explanation"]
+            },
+            description: "研修の理解を確認するための理解度テスト（3〜5問）"
+          }
+        },
+        required: ["content", "learned", "challenges", "quiz"]
+      }
+    };
+
+    // Candidates: primary fast & stable gemini-3.1-flash-lite, with gemini-3.8-flash fallback
+    const candidateModels = ["gemini-3.1-flash-lite", "gemini-3.8-flash"];
+    let lastError: any = null;
+    let response: any = null;
+
+    for (const model of candidateModels) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          response = await ai.models.generateContent({
+            model: model,
+            contents: contents,
+            config: generateConfig
+          });
+          if (response && response.text) {
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          const errMsg = err?.message || String(err);
+          console.warn(`Model ${model} attempt ${attempt + 1} failed:`, errMsg);
+          // Wait 1 second before retry if transient 503 or 429
+          if (errMsg.includes("503") || errMsg.includes("429") || errMsg.includes("UNAVAILABLE")) {
+            await new Promise(r => setTimeout(r, 1000));
+          } else {
+            break;
+          }
         }
       }
-    });
-
-    const resultText = response.text;
-    if (!resultText) {
-      throw new Error("Gemini API から要約結果を生成できませんでした。");
+      if (response && response.text) {
+        break;
+      }
     }
 
-    const summaryResult = JSON.parse(resultText.trim());
+    if (!response || !response.text) {
+      console.error("All Gemini attempts failed:", lastError);
+      const errStr = lastError?.message || "";
+      if (errStr.includes("503") || errStr.includes("UNAVAILABLE") || errStr.includes("high demand")) {
+        throw new Error("AIサーバーの利用が一時的に混み合っています。少し時間をおいて再度お試しください。");
+      }
+      throw new Error("AI自動要約の生成に失敗しました。再度お試しください。");
+    }
+
+    const summaryResult = JSON.parse(response.text.trim());
 
     res.json({
       success: true,
@@ -456,7 +492,7 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
 
   } catch (err: any) {
     console.error("Gemini summarizing error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message || "予期せぬエラーが発生しました。" });
   }
 });
 

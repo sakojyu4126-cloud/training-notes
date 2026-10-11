@@ -18,7 +18,10 @@ import {
   Clipboard, 
   Sparkles,
   BookOpen,
-  ArrowLeft
+  ArrowLeft,
+  CheckCircle2,
+  Info,
+  X
 } from 'lucide-react';
 
 export default function App() {
@@ -28,6 +31,16 @@ export default function App() {
   
   // Connection state
   const [serverConnected, setServerConnected] = useState<boolean>(true);
+
+  // In-app toast notification
+  const [toast, setToast] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+
+  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setToast({ text, type });
+    setTimeout(() => {
+      setToast((prev) => (prev?.text === text ? null : prev));
+    }, 4000);
+  };
 
   // Load reports from server API or LocalStorage fallback
   const loadReports = async () => {
@@ -72,7 +85,7 @@ export default function App() {
       if (data.success) {
         // Reload from server
         await loadReports();
-        alert("研修報告書を正常に保存し、データベースを同期しました。");
+        showToast("研修報告書を正常に保存しました（ローカル及びデータベースに同期完了）。", "success");
       } else {
         throw new Error(data.error);
       }
@@ -90,7 +103,7 @@ export default function App() {
       }
       setReports(updatedReports);
       localStorage.setItem('momonosato_reports_cache', JSON.stringify(updatedReports));
-      alert("ローカルストレージに報告書を保存しました。（サーバー接続復帰時に自動で同期されます）");
+      showToast("ローカルストレージに報告書を保存しました（オフラインでも安全に保持されます）。", "info");
     }
 
     setCurrentView('dashboard');
@@ -106,6 +119,7 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         await loadReports();
+        showToast("研修報告書を削除しました。", "info");
       } else {
         throw new Error(data.error);
       }
@@ -114,6 +128,7 @@ export default function App() {
       const updated = reports.filter(r => r.id !== id);
       setReports(updated);
       localStorage.setItem('momonosato_reports_cache', JSON.stringify(updated));
+      showToast("ローカルから研修報告書を削除しました。", "info");
     }
   };
 
@@ -122,6 +137,7 @@ export default function App() {
     // 1. Immediately store in local state and localStorage
     setReports(importedReports);
     localStorage.setItem('momonosato_reports_cache', JSON.stringify(importedReports));
+    showToast(`${importedReports.length} 件の研修データを正常に復元・反映しました。`, "success");
 
     // 2. Also sync to backend storage if server is running
     for (const report of importedReports) {
@@ -177,6 +193,22 @@ export default function App() {
       {/* Main View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
+        {/* In-app Toast Banner */}
+        {toast && (
+          <div className="no-print mb-4 flex items-center justify-between p-3.5 rounded-lg border shadow-sm transition-all duration-200 text-xs sm:text-sm font-meiryo-ui bg-emerald-50 border-emerald-200 text-emerald-800">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+              <span>{toast.text}</span>
+            </div>
+            <button
+              onClick={() => setToast(null)}
+              className="text-emerald-700 hover:text-emerald-950 p-1 rounded cursor-pointer"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
         {/* Dynamic sub navigation tabs for selected report (Hidden on print) */}
         {selectedReport && (currentView === 'preview-report' || currentView === 'preview-quiz') && (
           <div className="no-print flex items-center justify-between border-b border-slate-200 mb-6 pb-2">

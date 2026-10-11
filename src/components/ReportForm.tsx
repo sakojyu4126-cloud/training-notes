@@ -21,7 +21,9 @@ import {
   Trash2, 
   Sparkles, 
   AlertCircle,
-  Undo
+  Undo,
+  CheckCircle2,
+  RotateCw
 } from 'lucide-react';
 
 interface ReportFormProps {
@@ -73,6 +75,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Loading States
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   // Initial populate
   useEffect(() => {
@@ -228,18 +231,14 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
   // Call Gemini summarizing API on the server
   const handleAutoSummarize = async () => {
-    if (!audioBase64 && !copiedMaterialsText.trim()) {
-      setErrorMsg("録音した音声、またはコピー＆ペースト用の教材テキストのどちらかを事前に入力してください。");
-      return;
-    }
-
-    if (!theme.trim()) {
-      setErrorMsg("研修の議題・テーマを入力してください（AIの重要な要約の手がかりになります）。");
+    if (!theme.trim() && !copiedMaterialsText.trim() && !audioBase64) {
+      setErrorMsg("研修の「議題・テーマ」または「教材テキスト」を入力してください（AIが要約を作成する重要な手がかりになります）。");
       return;
     }
 
     setIsLoading(true);
     setErrorMsg('');
+    setSuccessMsg('');
 
     try {
       const response = await fetch('/api/summarize', {
@@ -260,12 +259,13 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         setSummaryLearned(data.summary.learned);
         setSummaryChallenges(data.summary.challenges);
         setQuizQuestions(data.quizQuestions);
+        setSuccessMsg(`AIによる研修内容・学んだこと・質疑応答の要約と、理解度テスト（全${data.quizQuestions?.length || 3}問）の自動作成が完了しました！下部で内容をご確認いただけます。`);
       } else {
-        setErrorMsg(data.error || "要約の生成に失敗しました。APIキーまたはネットワークを確認してください。");
+        setErrorMsg(data.error || "AI自動生成の処理中に一時的なエラーが発生しました。再度「再試行」をお試しください。");
       }
     } catch (err: any) {
       console.error("Summary error:", err);
-      setErrorMsg("サーバーとの接続中にエラーが発生しました。設定メニューからAPIキーの有無を確認してください。");
+      setErrorMsg("サーバーまたは通信の一時的なエラーが発生しました。再度「再試行」をお試しください。");
     } finally {
       setIsLoading(false);
     }
@@ -684,14 +684,39 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           </div>
         </div>
 
-        {/* Generate triggers */}
-        <div className="flex flex-col items-center gap-2 pt-2">
+        {/* Generate triggers & Status */}
+        <div className="flex flex-col items-center gap-3 pt-2">
+          {errorMsg && (
+            <div className="w-full max-w-xl bg-rose-50 border border-rose-200 p-3.5 rounded-lg flex items-center justify-between gap-3 text-xs sm:text-sm text-rose-700 font-meiryo-ui">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="text-rose-500 shrink-0" size={18} />
+                <span>{errorMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleAutoSummarize}
+                disabled={isLoading}
+                className="shrink-0 inline-flex items-center gap-1 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-bold text-xs transition cursor-pointer"
+              >
+                <RotateCw size={12} className={isLoading ? "animate-spin" : ""} />
+                再試行
+              </button>
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="w-full max-w-xl bg-emerald-50 border border-emerald-200 p-3 rounded-lg flex items-center gap-2 text-xs sm:text-sm text-emerald-800 font-meiryo-ui">
+              <CheckCircle2 className="text-emerald-600 shrink-0" size={18} />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
           <button
             type="button"
-            disabled={isLoading || (!audioBase64 && !copiedMaterialsText.trim())}
+            disabled={isLoading || (!theme.trim() && !audioBase64 && !copiedMaterialsText.trim())}
             onClick={handleAutoSummarize}
             className={`inline-flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-white shadow transition-all duration-150 cursor-pointer ${
-              isLoading || (!audioBase64 && !copiedMaterialsText.trim())
+              isLoading || (!theme.trim() && !audioBase64 && !copiedMaterialsText.trim())
                 ? "bg-slate-300 cursor-not-allowed shadow-none"
                 : "bg-gradient-to-r from-amber-500 to-blue-600 hover:from-amber-600 hover:to-blue-700 scale-100 active:scale-95 shadow-md"
             } font-meiryo-ui`}
@@ -700,9 +725,15 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             {isLoading ? "AIが解析・要約・理解度テスト生成中..." : "AIで要約 ＆ 理解度テストを自動生成"}
           </button>
 
-          <p className="text-[11px] text-slate-500 text-center font-meiryo-ui">
-            ※AI呼び出しはボタンクリック時の1回のみ実行されます（自動ループやピンポン呼び出し等の無駄な通信は一切行わず、1日5万回までの無料枠内で安全にご利用いただけます）。
-          </p>
+          <div className="space-y-1 text-center">
+            <p className="text-[11px] text-emerald-700 font-medium font-meiryo-ui flex items-center justify-center gap-1">
+              <CheckCircle2 size={13} className="text-emerald-600" />
+              <span>Google AI Studio連携完了済（追加のAPIキー設定や課金手続きは一切不要・無料枠稼働中）</span>
+            </p>
+            <p className="text-[11px] text-slate-500 font-meiryo-ui">
+              ※AI呼び出しはボタンクリック時の1回のみ実行されます（自動ループやピンポン呼び出し等の無駄な通信は一切行わず、1日5万回までの無料枠内で安全にご利用いただけます）。
+            </p>
+          </div>
         </div>
       </div>
 
