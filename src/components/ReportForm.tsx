@@ -306,6 +306,26 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         })
       });
 
+      if (!response.ok) {
+        let errorDetail = "AI自動生成の処理中にエラーが発生しました。";
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errorDetail = errData.error;
+          }
+        } catch {
+          if (response.status === 413) {
+            errorDetail = "音声データのサイズが上限を超えています。録音時間を短くするか、教材テキストの貼り付けをお試しください。";
+          } else if (response.status === 504 || response.status === 408) {
+            errorDetail = "AI生成の通信がタイムアウトしました。再度「再試行」を押すか、少し時間をおいてお試しください。";
+          } else {
+            errorDetail = `サーバーエラー（HTTP ${response.status}）が発生しました。再度「再試行」をお試しください。`;
+          }
+        }
+        setErrorMsg(errorDetail);
+        return;
+      }
+
       const data = await response.json();
       if (data.success) {
         setSummaryContent(data.summary.content);
@@ -314,11 +334,16 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         setQuizQuestions(data.quizQuestions);
         setSuccessMsg(`AIによる研修内容・学んだこと・質疑応答の要約と、理解度テスト（全${data.quizQuestions?.length || 3}問）の自動作成が完了しました！下部で内容をご確認いただけます。`);
       } else {
-        setErrorMsg(data.error || "AI自動生成の処理中に一時的なエラーが発生しました。再度「再試行」をお試しください。");
+        setErrorMsg(data.error || "AI自動生成の処理中にエラーが発生しました。再度「再試行」をお試しください。");
       }
     } catch (err: any) {
       console.error("Summary error:", err);
-      setErrorMsg("サーバーまたは通信の一時的なエラーが発生しました。再度「再試行」をお試しください。");
+      const isNetwork = err?.name === 'TypeError' || String(err).includes('fetch');
+      if (isNetwork) {
+        setErrorMsg("通信が中断されたか、一時的なタイムアウトが発生しました。再度「再試行」をお試しください。");
+      } else {
+        setErrorMsg(err?.message || "通信または処理の一時的なエラーが発生しました。再度「再試行」をお試しください。");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -853,6 +878,18 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             </div>
           )}
 
+          {isLoading && (
+            <div className="w-full max-w-xl bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-start gap-3 text-xs sm:text-sm text-blue-800 font-meiryo-ui shadow-xs animate-pulse">
+              <Loader2 className="animate-spin text-blue-600 shrink-0 mt-0.5" size={20} />
+              <div className="space-y-1">
+                <div className="font-bold text-blue-900">AIが音声を解析し、研修報告書と理解度テストを作成しています...</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  監査基準に適合する「箇条書き要約」「学んだこと」「質疑応答」「理解度テスト（正解・解説付き）」を自動生成中です。処理完了まで十数秒ほどそのままお待ちください。
+                </p>
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             disabled={isLoading || (!theme.trim() && !audioBase64 && !copiedMaterialsText.trim())}
@@ -864,7 +901,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             } font-meiryo-ui`}
           >
             <Cpu size={18} className={isLoading ? "animate-spin" : ""} />
-            {isLoading ? "AIが解析・要約・理解度テスト生成中..." : "AIで要約 ＆ 理解度テストを自動生成"}
+            {isLoading ? "AIが解析・要約・テスト生成中..." : "AIで要約 ＆ 理解度テストを自動生成"}
           </button>
         </div>
       </div>

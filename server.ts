@@ -341,7 +341,11 @@ async function processAudioForGemini(
 
     // Convert and compress to speech-optimized 16kHz mono AAC (compatible with all Gemini models)
     // 32kbps mono AAC preserves crystal-clear speech fidelity while keeping payload small
-    await execAsync(`ffmpeg -i "${inputPath}" -vn -ac 1 -ar 16000 -c:a aac -b:a 32k "${outputPath}" -y 2>/dev/null`);
+    try {
+      await execAsync(`ffmpeg -i "${inputPath}" -vn -ac 1 -ar 16000 -c:a aac -b:a 32k "${outputPath}" -y`);
+    } catch (ffmpegCmdErr) {
+      console.warn("ffmpeg compression command warning:", ffmpegCmdErr);
+    }
 
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
       const outputBuffer = fs.readFileSync(outputPath);
@@ -400,8 +404,8 @@ app.post("/api/summarize", async (req, res) => {
       const sizeMB = buffer.length / (1024 * 1024);
       console.log(`Audio processed successfully: size=${sizeMB.toFixed(2)}MB, mime=${processedMime}`);
 
-      // If buffer is <= 10MB, pass as inlineData for lowest latency
-      if (sizeMB <= 10) {
+      // If buffer is <= 20MB, pass as inlineData for lowest latency and maximum reliability
+      if (sizeMB <= 20) {
         contents.push({
           inlineData: {
             data: buffer.toString("base64"),
@@ -409,7 +413,7 @@ app.post("/api/summarize", async (req, res) => {
           },
         });
       } else {
-        // If buffer > 10MB, upload via Gemini File API
+        // If buffer > 20MB, upload via Gemini File API and poll until state is ACTIVE
         const uploadPath = tempFilePath || path.join("/tmp", `upload_${Date.now()}.m4a`);
         if (!tempFilePath) {
           fs.writeFileSync(uploadPath, buffer);
@@ -422,10 +426,24 @@ app.post("/api/summarize", async (req, res) => {
           config: { mimeType: processedMime }
         });
 
+        // Polling until file state is ACTIVE
+        let fileStatus = uploadedGeminiFile;
+        let pollAttempts = 0;
+        while (fileStatus.state === "PROCESSING" && pollAttempts < 30) {
+          console.log(`Waiting for Gemini file processing (attempt ${pollAttempts + 1})...`);
+          await new Promise((r) => setTimeout(r, 2000));
+          fileStatus = await ai.files.get({ name: uploadedGeminiFile.name });
+          pollAttempts++;
+        }
+
+        if (fileStatus.state !== "ACTIVE") {
+          throw new Error(`Geminiファイル解析の準備が完了しませんでした（状態: ${fileStatus.state}）`);
+        }
+
         contents.push({
           fileData: {
-            fileUri: uploadedGeminiFile.uri,
-            mimeType: uploadedGeminiFile.mimeType || processedMime,
+            fileUri: fileStatus.uri,
+            mimeType: fileStatus.mimeType || processedMime,
           }
         });
       }
@@ -529,8 +547,8 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
       }
     };
 
-    // Candidates: primary fast & stable gemini-3.5-flash-lite, with gemini-3.1-flash-lite and gemini-3.8-flash fallbacks
-    const candidateModels = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
+    // Candidates: primary fast & stable gemini-3.5-flash-lite, with gemini-flash-latest, gemini-3.1-flash-lite, and gemini-3.8-flash fallbacks
+    const candidateModels = ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
     let lastError: any = null;
     let response: any = null;
 
