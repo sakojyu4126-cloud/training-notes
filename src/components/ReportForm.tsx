@@ -25,9 +25,22 @@ import {
   CheckCircle2,
   RotateCw,
   Loader2,
-  Volume2
+  Volume2,
+  Settings2
 } from 'lucide-react';
-import { convertAudioWithWebAudio, formatFileSize, formatAudioDuration } from '../utils/audioConverter';
+import { 
+  convertAudioWithWebAudio, 
+  convertAudioFormat, 
+  convertAudioToWav, 
+  convertM4aToWav, 
+  convertAudioToWebM, 
+  getMediaRecorderSupportInfo, 
+  getOptimalRecordingMimeType, 
+  isRecordingSupported, 
+  formatFileSize, 
+  formatAudioDuration,
+  MediaRecorderSupportInfo
+} from '../utils/audioConverter';
 
 interface ReportFormProps {
   initialReport?: TrainingReport | null;
@@ -66,9 +79,21 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   const [audioDuration, setAudioDuration] = useState<number>(0);
   const [audioConversionInfo, setAudioConversionInfo] = useState<string>('');
   const [isConvertingAudio, setIsConvertingAudio] = useState(false);
+  const [audioTargetFormat, setAudioTargetFormat] = useState<'auto' | 'wav' | 'webm'>('auto');
+  const [mediaSupportInfo, setMediaSupportInfo] = useState<MediaRecorderSupportInfo | null>(null);
   const [uploadProgressText, setUploadProgressText] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectedAudioFileRef = useRef<File | Blob | null>(null);
+
+  // Check MediaRecorder capabilities once on mount
+  useEffect(() => {
+    try {
+      const info = getMediaRecorderSupportInfo();
+      setMediaSupportInfo(info);
+    } catch (e) {
+      console.warn("Failed to inspect MediaRecorder capabilities:", e);
+    }
+  }, []);
 
   // Summaries
   const [summaryContent, setSummaryContent] = useState('');
@@ -179,52 +204,82 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   const startRecording = async () => {
     try {
       setErrorMsg('');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!isRecordingSupported()) {
+        setErrorMsg('お使いのブラウザはマイク録音（MediaRecorder）に対応していません。音声ファイルのアップロードをご利用ください。');
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       audioChunksRef.current = [];
       
       // Determine optimal audio mime type supported by this browser
-      const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : '';
-
+      const preferredMime = getOptimalRecordingMimeType();
       const recorder = preferredMime 
         ? new MediaRecorder(stream, { mimeType: preferredMime }) 
         : new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const actualMime = recorder.mimeType || preferredMime || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+        const rawBlob = new Blob(audioChunksRef.current, { type: actualMime });
+        
+        // Stop all audio tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+
+        // If targetFormat is explicitly 'wav', convert recording to universal 16kHz WAV
+        if (audioTargetFormat === 'wav') {
+          setIsConvertingAudio(true);
+          setAudioConversionInfo('録音音声を16kHz WAVへ変換中...');
+          try {
+            const result = await convertAudioToWav(rawBlob);
+            selectedAudioFileRef.current = result.blob;
+            if (audioBlobUrl) {
+              URL.revokeObjectURL(audioBlobUrl);
+            }
+            const newUrl = URL.createObjectURL(result.blob);
+            setAudioBlobUrl(newUrl);
+            setAudioMimeType(result.mimeType);
+            setAudioFileName(result.fileName);
+            setAudioFileSize(formatFileSize(result.convertedSize));
+            setAudioDuration(result.duration);
+            setAudioConversionInfo(result.formatNote);
+            return;
+          } catch (convErr) {
+            console.warn('WAV conversion of recording failed, using raw recorded blob:', convErr);
+          } finally {
+            setIsConvertingAudio(false);
+          }
+        }
+
         const ext = actualMime.includes('mp4') ? 'm4a' : 'webm';
         const fileName = `direct_recording.${ext}`;
-        
-        selectedAudioFileRef.current = audioBlob;
+        selectedAudioFileRef.current = rawBlob;
         if (audioBlobUrl) {
           URL.revokeObjectURL(audioBlobUrl);
         }
-        const newUrl = URL.createObjectURL(audioBlob);
+        const newUrl = URL.createObjectURL(rawBlob);
         setAudioBlobUrl(newUrl);
 
         setAudioMimeType(actualMime);
         setAudioFileName(fileName);
-        setAudioFileSize(formatFileSize(audioBlob.size));
+        setAudioFileSize(formatFileSize(rawBlob.size));
         setAudioConversionInfo(`ブラウザ直接録音 (${actualMime.split(';')[0]})`);
-
-        // stop all audio tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
       };
 
-      recorder.start();
+      // 1000ms timeslice ensures continuous chunk buffering and resilience against browser suspends
+      recorder.start(1000);
       setIsRecording(true);
       setRecordingSeconds(0);
 
@@ -248,7 +303,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     }
   };
 
-  // Handle uploaded audio files with Web Audio API inspection and direct binary preservation
+  // Handle uploaded audio files with Web Audio API conversion (M4A to 16kHz WAV / WebM)
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setErrorMsg('');
     if (e.target.files && e.target.files[0]) {
@@ -264,18 +319,51 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       setIsConvertingAudio(true);
       setAudioFileName(file.name);
       setAudioFileSize(formatFileSize(file.size));
-      setAudioConversionInfo('音声を検証・最適化中...');
+      setAudioConversionInfo('音声を解析し、AI最適化形式へ変換中...');
 
       try {
-        const result = await convertAudioWithWebAudio(file);
+        const result = await convertAudioFormat(file, audioTargetFormat);
+        selectedAudioFileRef.current = result.blob;
+        if (audioBlobUrl) {
+          URL.revokeObjectURL(audioBlobUrl);
+        }
+        const convertedUrl = URL.createObjectURL(result.blob);
+        setAudioBlobUrl(convertedUrl);
         setAudioMimeType(result.mimeType);
         setAudioFileName(result.fileName);
         setAudioDuration(result.duration);
-        setAudioFileSize(formatFileSize(result.originalSize));
+        setAudioFileSize(formatFileSize(result.convertedSize));
         setAudioConversionInfo(result.formatNote);
       } catch (err: any) {
-        console.error("Audio inspection error:", err);
+        console.error("Audio inspection/conversion error:", err);
         setAudioMimeType('audio/mp4');
+      } finally {
+        setIsConvertingAudio(false);
+      }
+    }
+  };
+
+  // Change target conversion format (e.g., M4A -> 16kHz WAV or WebM)
+  const handleFormatChange = async (newFormat: 'auto' | 'wav' | 'webm') => {
+    setAudioTargetFormat(newFormat);
+    if (selectedAudioFileRef.current) {
+      setIsConvertingAudio(true);
+      setAudioConversionInfo('フォーマット再変換中...');
+      try {
+        const result = await convertAudioFormat(selectedAudioFileRef.current, newFormat);
+        selectedAudioFileRef.current = result.blob;
+        if (audioBlobUrl) {
+          URL.revokeObjectURL(audioBlobUrl);
+        }
+        const convertedUrl = URL.createObjectURL(result.blob);
+        setAudioBlobUrl(convertedUrl);
+        setAudioMimeType(result.mimeType);
+        setAudioFileName(result.fileName);
+        setAudioDuration(result.duration);
+        setAudioFileSize(formatFileSize(result.convertedSize));
+        setAudioConversionInfo(result.formatNote);
+      } catch (err: any) {
+        console.error("Format change error:", err);
       } finally {
         setIsConvertingAudio(false);
       }
@@ -786,6 +874,56 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
                 研修音声の取り込み（M4A・スマホ録音対応）
               </h4>
               <span className="text-[11px] text-slate-500 font-meiryo-ui">Web Audio API自動最適化</span>
+            </div>
+
+            {/* Format mode selector & Environment details */}
+            <div className="bg-slate-100/80 p-2 rounded-lg border border-slate-200/60 text-xs font-meiryo-ui space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                  <Settings2 size={12} className="text-slate-500" />
+                  変換・安定化設定:
+                </span>
+                {mediaSupportInfo && (
+                  <span className="text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                    {mediaSupportInfo.isSafari ? 'Safari/iOS: MP4 & WAV' : 'Chrome/Edge: WebM & WAV'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleFormatChange('auto')}
+                  className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+                    audioTargetFormat === 'auto'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 hover:bg-slate-200/70 border border-slate-200'
+                  }`}
+                >
+                  自動最適化（M4A→WAV）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFormatChange('wav')}
+                  className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+                    audioTargetFormat === 'wav'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 hover:bg-slate-200/70 border border-slate-200'
+                  }`}
+                >
+                  16kHz WAV（最高互換性）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFormatChange('webm')}
+                  className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer ${
+                    audioTargetFormat === 'webm'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 hover:bg-slate-200/70 border border-slate-200'
+                  }`}
+                >
+                  WebM（高圧縮）
+                </button>
+              </div>
             </div>
             
             <div className="flex flex-wrap items-center gap-2.5">
