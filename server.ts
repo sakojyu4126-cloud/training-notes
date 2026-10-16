@@ -6,11 +6,14 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
 
 const execAsync = promisify(exec);
 
@@ -448,25 +451,196 @@ app.post("/api/audio/upload-chunk", express.raw({ type: "*/*", limit: "20mb" }),
   }
 });
 
-// API: Summarize Audio or Text and Generate quiz
+// API: Parse uploaded document (Word docx, Excel xls/xlsx, PDF, or Images)
+app.post("/api/parse-document", async (req, res) => {
+  try {
+    const { fileData, fileName, mimeType } = req.body;
+    if (!fileData) {
+      return res.status(400).json({ success: false, error: "ファイルデータが空です。" });
+    }
+
+    const cleanBase64 = fileData.includes("base64,") ? fileData.split("base64,")[1] : fileData;
+    const buffer = Buffer.from(cleanBase64, "base64");
+    const lowerName = (fileName || "").toLowerCase();
+    const cleanMime = (mimeType || "").toLowerCase();
+
+    // 1. Word documents (.docx)
+    if (lowerName.endsWith(".docx") || cleanMime.includes("wordprocessingml") || cleanMime.includes("docx")) {
+      const result = await mammoth.extractRawText({ buffer });
+      const extractedText = result.value.trim();
+      return res.json({
+        success: true,
+        type: "text",
+        text: extractedText,
+        fileName,
+        note: `Word文書（${fileName}）から本文テキストを抽出しました（${extractedText.length}文字）`
+      });
+    }
+
+    // 2. Excel spreadsheets (.xlsx, .xls)
+    if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || cleanMime.includes("spreadsheet") || cleanMime.includes("excel")) {
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const sheetTexts: string[] = [];
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        if (csv.trim()) {
+          sheetTexts.push(`【シート: ${sheetName}】\n${csv}`);
+        }
+      }
+      const extractedText = sheetTexts.join("\n\n");
+      return res.json({
+        success: true,
+        type: "text",
+        text: extractedText,
+        fileName,
+        note: `Excel（${fileName}）から表データを抽出しました（${workbook.SheetNames.length}シート）`
+      });
+    }
+
+    // 3. Plain text files (.txt, .csv)
+    if (lowerName.endsWith(".txt") || lowerName.endsWith(".csv") || cleanMime.includes("text/")) {
+      const text = buffer.toString("utf-8");
+      return res.json({
+        success: true,
+        type: "text",
+        text,
+        fileName,
+        note: `テキストファイル（${fileName}）を取り込みました`
+      });
+    }
+
+    // 4. PDF documents (.pdf)
+    if (lowerName.endsWith(".pdf") || cleanMime.includes("pdf")) {
+      return res.json({
+        success: true,
+        type: "pdf",
+        fileName,
+        mimeType: "application/pdf",
+        base64: cleanBase64,
+        size: buffer.length,
+        note: `PDF資料（${fileName}）を添付しました。AIが視覚・文書全体を直接読み取ります。`
+      });
+    }
+
+    // 5. Image files (.png, .jpg, .jpeg, .webp)
+    if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".webp") || cleanMime.startsWith("image/")) {
+      let imgMime = "image/jpeg";
+      if (lowerName.endsWith(".png") || cleanMime.includes("png")) imgMime = "image/png";
+      else if (lowerName.endsWith(".webp") || cleanMime.includes("webp")) imgMime = "image/webp";
+
+      return res.json({
+        success: true,
+        type: "image",
+        fileName,
+        mimeType: imgMime,
+        base64: cleanBase64,
+        size: buffer.length,
+        note: `画像資料（${fileName}）を添付しました。AIが図表・スライド内容を直接視覚解析します。`
+      });
+    }
+
+    // Fallback: UTF-8 text
+    const textFallback = buffer.toString("utf-8");
+    return res.json({
+      success: true,
+      type: "text",
+      text: textFallback,
+      fileName,
+      note: `ファイル（${fileName}）をテキストとして取り込みました`
+    });
+  } catch (err: any) {
+    console.error("Document parse error:", err);
+    res.status(500).json({ success: false, error: `資料の解析に失敗しました: ${err.message}` });
+  }
+});
+
+// AI Protection & Quota Safeguards:
+// 1. Strict concurrency locking (no overlapping AI calls)
+// 2. Sliding-window rate limiting (max 4 calls / min)
+// 3. Deduplication Cache (zero token usage for identical inputs within 10 minutes)
+// 4. Instant halt on quota exceeded (RESOURCE_EXHAUSTED / 429) to prevent endless retries
+let isGeminiCallInProgress = false;
+const requestTimestamps: number[] = [];
+const summaryCache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const RATE_LIMIT_MAX_REQUESTS = 4;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+
+// API: Summarize Audio or Text and Generate quiz with multi-layer quota protection
 app.post("/api/summarize", async (req, res) => {
   let uploadedGeminiFile: any = null;
   let tempAudioFileToClean: string | null = null;
 
-  try {
-    const { audioId, audioData, mimeType, textData, theme, officeName } = req.body;
+  // Safeguard 1: Concurrency check (reject duplicate parallel calls)
+  if (isGeminiCallInProgress) {
+    return res.status(429).json({ 
+      success: false, 
+      error: "現在、別のAI生成処理が進行中です。二重呼び出しやAPIクォータの過剰消費を防ぐため、完了までしばらくお待ちください。" 
+    });
+  }
 
-    if (!audioId && !audioData && !textData && !theme?.trim()) {
+  // Safeguard 2: Sliding-window rate limit (prevent runaway loop requests)
+  const now = Date.now();
+  while (requestTimestamps.length > 0 && requestTimestamps[0] < now - RATE_LIMIT_WINDOW_MS) {
+    requestTimestamps.shift();
+  }
+  if (requestTimestamps.length >= RATE_LIMIT_MAX_REQUESTS) {
+    return res.status(429).json({
+      success: false,
+      error: "AI呼び出しの頻度制限に達しました。無料枠を保護するため、1分ほど時間を空けてから再度お試しください。"
+    });
+  }
+
+  try {
+    const { audioId, audioData, mimeType, textData, theme, officeName, attachments } = req.body;
+
+    if (!audioId && !audioData && !textData && !theme?.trim() && (!attachments || attachments.length === 0)) {
       return res.status(400).json({ 
         success: false, 
-        error: "研修テーマ、テキスト資料、または音声のいずれかを入力してください。" 
+        error: "研修テーマ、テキスト資料、添付ファイル、または音声のいずれかを入力してください。" 
       });
     }
+
+    // Safeguard 3: Hash-based Deduplication Cache
+    const attFingerprint = (attachments || []).map((a: any) => `${a.fileName || ''}_${a.data ? a.data.length : 0}`).join(",");
+    const audioFingerprint = audioId || (audioData ? `${audioData.length}_${audioData.slice(0, 100)}` : "no_audio");
+    const cacheKey = crypto.createHash("sha256")
+      .update(`${theme || ""}_${officeName || ""}_${(textData || "").trim()}_${audioFingerprint}_${attFingerprint}`)
+      .digest("hex");
+
+    const cached = summaryCache.get(cacheKey);
+    if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+      console.log("Returning cached AI summary (0 quota/tokens consumed):", cacheKey);
+      return res.json({
+        ...cached.data,
+        cached: true
+      });
+    }
+
+    // Lock concurrency
+    isGeminiCallInProgress = true;
+    requestTimestamps.push(now);
 
     const ai = getGeminiClient();
 
     // Prepare multi-modal inputs for Gemini
     const contents: any[] = [];
+
+    // Add multimodal document attachments (PDF or Images)
+    if (attachments && Array.isArray(attachments)) {
+      for (const att of attachments) {
+        if (att.data && (att.mimeType?.startsWith("image/") || att.mimeType === "application/pdf")) {
+          const cleanBase64 = att.data.includes("base64,") ? att.data.split("base64,")[1] : att.data;
+          contents.push({
+            inlineData: {
+              data: cleanBase64,
+              mimeType: att.mimeType,
+            }
+          });
+        }
+      }
+    }
 
     // Resolve audio: from chunk-uploaded audioId or from base64 audioData
     let processedBuffer: Buffer | null = null;
@@ -500,10 +674,10 @@ app.post("/api/summarize", async (req, res) => {
       }
     } else if (audioData) {
       const base64Data = audioData.includes("base64,") ? audioData.split("base64,")[1] : audioData;
-      const res = await processAudioForGemini(base64Data, mimeType);
-      processedBuffer = res.buffer;
-      processedMime = res.mimeType;
-      tempAudioFileToClean = res.tempFilePath || null;
+      const resAudio = await processAudioForGemini(base64Data, mimeType);
+      processedBuffer = resAudio.buffer;
+      processedMime = resAudio.mimeType;
+      tempAudioFileToClean = resAudio.tempFilePath || null;
     }
 
     // Add audio to contents if resolved
@@ -589,8 +763,9 @@ app.post("/api/summarize", async (req, res) => {
 ・事業所名: ${officeName || "ヘルパーステーション桃の郷 京都東山"}
 
 【提供されたインプット資料】
-${textData ? `【テキスト・教材資料 (コピー＆ペースト内容)】:\n${textData}\n` : "【テキスト資料】: なし（研修テーマおよび法令・ガイドラインに準拠して標準的な指導項目を作成してください）\n"}
-${audioData ? `【研修音声/録音】: 音声ファイルが添付されています。音声の内容をテキストとして解析・統合し、対話内容や講義内容を要約に含めてください。\n` : ""}
+${textData ? `【テキスト・教材資料 (コピー＆ペースト・文書抽出内容)】:\n${textData}\n` : "【テキスト資料】: なし（研修テーマおよび法令・ガイドラインに準拠して標準的な指導項目を作成してください）\n"}
+${attachments && attachments.length > 0 ? `【添付資料（PDF／画像）】: 資料ファイルが添付されています。視覚情報・スライド・図表の内容を解析して要約およびテストに反映してください。\n` : ""}
+${processedBuffer ? `【研修音声/録音】: 音声データが提供されています。音声の会話・講義内容を統合して反映してください。\n` : ""}
 
 これらを完全に統合し、①研修内容は【必ず「・」で始まる箇条書き（改行区切り）】に整形した上で、指定のJSONスキーマに従って出力してください。
 `;
@@ -652,57 +827,62 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
       }
     };
 
-    // Candidates: primary fast & stable gemini-3.5-flash-lite, with gemini-flash-latest, gemini-3.1-flash-lite, and gemini-3.8-flash fallbacks
-    const candidateModels = ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
+    // Safeguard 4: Use fast, stable primary model (gemini-3.5-flash-lite)
+    // Only 1 fallback to gemini-flash-latest, never an 8-call recursive loop!
+    const candidateModels = ["gemini-3.5-flash-lite", "gemini-flash-latest"];
     let lastError: any = null;
     let response: any = null;
 
     for (const model of candidateModels) {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          response = await ai.models.generateContent({
-            model: model,
-            contents: contents,
-            config: generateConfig
-          });
-          if (response && response.text) {
-            break;
+      try {
+        response = await ai.models.generateContent({
+          model: model,
+          contents: contents,
+          config: {
+            ...generateConfig,
+            maxOutputTokens: 3500,
+            temperature: 0.2
           }
-        } catch (err: any) {
-          lastError = err;
-          const errMsg = err?.message || String(err);
-          console.warn(`Model ${model} attempt ${attempt + 1} failed:`, errMsg);
-          // Wait 1 second before retry if transient 503 or 429
-          if (errMsg.includes("503") || errMsg.includes("429") || errMsg.includes("UNAVAILABLE")) {
-            await new Promise(r => setTimeout(r, 1000));
-          } else {
-            break;
-          }
+        });
+        if (response && response.text) {
+          break;
         }
-      }
-      if (response && response.text) {
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || String(err);
+        console.warn(`Model ${model} call failed:`, errMsg);
+
+        // QUOTA DEFENSE: If quota exceeded or rate limited (429 / RESOURCE_EXHAUSTED), STOP IMMEDIATELY!
+        // Never jump between models or retry in loop when quota is the issue.
+        if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
+          throw new Error("AIの無料利用枠の制限（クォータ上限）に達しました。Google Cloudの利用枠保護のため処理を停止しました。少し時間をおいてから再度お試しいただくか、手入力での作成をご利用ください。");
+        }
+
+        // Only retry with fallback model if transient 503 error
+        if (errMsg.includes("503") || errMsg.includes("UNAVAILABLE")) {
+          await new Promise(r => setTimeout(r, 1200));
+          continue;
+        }
         break;
       }
     }
 
     if (!response || !response.text) {
-      console.error("All Gemini attempts failed:", lastError);
+      console.error("Gemini call failed:", lastError);
       const errStr = lastError?.message || "";
       if (errStr.includes("503") || errStr.includes("UNAVAILABLE") || errStr.includes("high demand")) {
         throw new Error("AIサーバーの利用が一時的に混み合っています。少し時間をおいて再度お試しください。");
       }
-      throw new Error("AI自動要約の生成に失敗しました。再度お試しください。");
+      throw new Error(lastError?.message || "AI自動要約の生成に失敗しました。再度お試しください。");
     }
 
     let rawText = response.text.trim();
-    // Strip markdown code fences if model enclosed JSON in ```json ... ```
     if (rawText.startsWith("```json")) {
       rawText = rawText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
     } else if (rawText.startsWith("```")) {
       rawText = rawText.replace(/^```\s*/, "").replace(/\s*```$/, "");
     }
 
-    // Extract outermost JSON block if any extra text exists
     const firstBrace = rawText.indexOf("{");
     const lastBrace = rawText.lastIndexOf("}");
     if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
@@ -711,7 +891,7 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
 
     const summaryResult = JSON.parse(rawText.trim());
 
-    res.json({
+    const resultPayload = {
       success: true,
       summary: {
         content: summaryResult.content || "",
@@ -722,7 +902,12 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
         id: `gen-${Date.now()}-${i}`,
         ...q
       }))
-    });
+    };
+
+    // Save in cache for deduplication
+    summaryCache.set(cacheKey, { data: resultPayload, timestamp: Date.now() });
+
+    res.json(resultPayload);
 
   } catch (err: any) {
     console.error("Gemini summarizing error:", err);
@@ -730,7 +915,7 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
     if (msg.includes("413") || msg.includes("too large") || msg.includes("Payload Too Large")) {
       res.status(400).json({ 
         success: false, 
-        error: "音声ファイルのデータ容量が大きすぎます。時間を短くするか、教材テキスト貼り付けもお試しください。" 
+        error: "音声・資料ファイルのデータ容量が大きすぎます。時間を短くするか、テキスト貼り付けもお試しください。" 
       });
     } else {
       res.status(500).json({ 
@@ -739,6 +924,9 @@ ${audioData ? `【研修音声/録音】: 音声ファイルが添付されて�
       });
     }
   } finally {
+    // Release concurrency lock
+    isGeminiCallInProgress = false;
+
     // Clean up temporary local files
     if (tempAudioFileToClean) {
       try {

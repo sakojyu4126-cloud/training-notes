@@ -26,7 +26,12 @@ import {
   RotateCw,
   Loader2,
   Volume2,
-  Settings2
+  Settings2,
+  Paperclip,
+  Image as ImageIcon,
+  Clipboard,
+  X,
+  FileSpreadsheet
 } from 'lucide-react';
 import { 
   convertAudioWithWebAudio, 
@@ -110,10 +115,37 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Attachments & document paste state
+  interface AttachedDoc {
+    id: string;
+    fileName: string;
+    mimeType: string;
+    data?: string;
+    size?: number;
+    type: 'image' | 'pdf' | 'text';
+  }
+  const [attachments, setAttachments] = useState<AttachedDoc[]>([]);
+  const [isParsingDocument, setIsParsingDocument] = useState(false);
+  const [documentParseNote, setDocumentParseNote] = useState<string>('');
+  const docFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Anti-loop and quota safeguards
+  const isCallingRef = useRef<boolean>(false);
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+
   // Loading States
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Countdown timer for cooldown safeguard
+  useEffect(() => {
+    if (cooldownRemaining <= 0) return;
+    const t = setInterval(() => {
+      setCooldownRemaining(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [cooldownRemaining]);
 
   // Initial populate
   useEffect(() => {
@@ -388,13 +420,169 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     }
   };
 
+  // Process any uploaded or pasted document (Word, Excel, PDF, Text, Images)
+  const processUploadedDocument = async (file: File) => {
+    setIsParsingDocument(true);
+    setDocumentParseNote(`ファイル「${file.name}」を解析中...`);
+    setErrorMsg('');
+
+    try {
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch('/api/parse-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileData: base64Data,
+          fileName: file.name,
+          mimeType: file.type
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`ファイルの解析に失敗しました (HTTP ${res.status})`);
+      }
+
+      const parsed = await res.json();
+      if (!parsed.success) {
+        throw new Error(parsed.error || 'ファイルの解析に失敗しました');
+      }
+
+      if (parsed.type === 'text') {
+        setCopiedMaterialsText(prev => {
+          const separator = prev.trim() ? '\n\n---\n\n' : '';
+          return prev + separator + `【資料テキスト: ${file.name}】\n` + parsed.text;
+        });
+        setDocumentParseNote(parsed.note || `「${file.name}」からテキストを抽出しました`);
+      } else if (parsed.type === 'pdf' || parsed.type === 'image') {
+        const newAtt: AttachedDoc = {
+          id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          fileName: file.name,
+          mimeType: parsed.mimeType || file.type,
+          data: parsed.base64,
+          size: file.size,
+          type: parsed.type
+        };
+        setAttachments(prev => [...prev, newAtt]);
+        setDocumentParseNote(parsed.note || `「${file.name}」をAI解析対象として添付しました`);
+      }
+    } catch (err: any) {
+      console.error("Document upload/parse error:", err);
+      setErrorMsg(err.message || '資料の取り込みに失敗しました。');
+    } finally {
+      setIsParsingDocument(false);
+      if (docFileInputRef.current) {
+        docFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Clipboard paste event handler on the text area
+  const handleMaterialsPaste = async (e: React.ClipboardEvent) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData || !clipboardData.items) return;
+
+    // Check for files in clipboard (e.g. copied images/screenshots, files from file manager)
+    for (let i = 0; i < clipboardData.items.length; i++) {
+      const item = clipboardData.items[i];
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          await processUploadedDocument(file);
+        }
+      }
+    }
+  };
+
+  // Paste from clipboard button
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            for (const type of item.types) {
+              if (type.startsWith('image/')) {
+                const blob = await item.getType(type);
+                const file = new File([blob], `screenshot_${Date.now()}.png`, { type });
+                await processUploadedDocument(file);
+                return;
+              }
+            }
+          }
+        } catch (readErr) {
+          console.warn("navigator.clipboard.read fallback to readText:", readErr);
+        }
+      }
+
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          setCopiedMaterialsText(prev => {
+            const separator = prev.trim() ? '\n\n' : '';
+            return prev + separator + text.trim();
+          });
+          setDocumentParseNote('クリップボードのテキストを貼り付けました');
+          return;
+        }
+      }
+      setErrorMsg('クリップボードにデータが見つかりませんでした。テキストエリア内で直接 Ctrl+V (MacはCmd+V) をお試しください。');
+    } catch (err: any) {
+      console.warn("Clipboard access error:", err);
+      setErrorMsg('ブラウザの権限でクリップボードの直接読み取りが制限されています。テキスト枠内で直接 Ctrl+V (MacはCmd+V) を押して貼り付けてください。');
+    }
+  };
+
+  // Document file input change handler
+  const handleDocFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    for (let i = 0; i < files.length; i++) {
+      await processUploadedDocument(files[i]);
+    }
+  };
+
+  // Drag and drop handlers
+  const handleFileDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    for (let i = 0; i < files.length; i++) {
+      await processUploadedDocument(files[i]);
+    }
+  };
+
+  const removeAttachment = (attId: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== attId));
+  };
+
   // Call Gemini summarizing API on the server using resilient chunked streaming for audio
+  // Protected with concurrency locks, double-click prevention, rate limit safeguards, and quota monitoring
   const handleAutoSummarize = async () => {
-    if (!theme.trim() && !copiedMaterialsText.trim() && !selectedAudioFileRef.current && !audioBase64) {
-      setErrorMsg("研修の「議題・テーマ」または「教材テキスト」を入力してください（AIが要約を作成する重要な手がかりになります）。");
+    // Safeguard 1: Prevent parallel / double-click execution
+    if (isCallingRef.current || isLoading) {
       return;
     }
 
+    // Safeguard 2: Cooldown check
+    if (cooldownRemaining > 0) {
+      setErrorMsg(`短時間の連続実行を防止しています。あと ${cooldownRemaining} 秒お待ちください。`);
+      return;
+    }
+
+    if (!theme.trim() && !copiedMaterialsText.trim() && !selectedAudioFileRef.current && !audioBase64 && attachments.length === 0) {
+      setErrorMsg("研修の「議題・テーマ」、「教材テキスト」、「添付ファイル（PDF/Word/Excel/画像）」、または「音声」のいずれかを入力してください。");
+      return;
+    }
+
+    isCallingRef.current = true;
     setIsLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
@@ -442,7 +630,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         }
       }
 
-      setUploadProgressText('AIが音声を解析し、研修報告書と理解度テストを作成中...');
+      setUploadProgressText('AIが資料・音声を安全に解析し、研修報告書と理解度テストを作成中...');
 
       const response = await fetch('/api/summarize', {
         method: 'POST',
@@ -453,7 +641,12 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           mimeType: audioMimeType,
           textData: copiedMaterialsText,
           theme: theme,
-          officeName: officeName
+          officeName: officeName,
+          attachments: attachments.map(a => ({
+            fileName: a.fileName,
+            mimeType: a.mimeType,
+            data: a.data
+          }))
         })
       });
 
@@ -466,7 +659,9 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           }
         } catch {
           if (response.status === 413) {
-            errorDetail = "音声データのサイズが上限を超えています。録音時間を短くするか、教材テキストの貼り付けをお試しください。";
+            errorDetail = "音声または資料データのサイズが上限を超えています。データサイズを小さくしてお試しください。";
+          } else if (response.status === 429) {
+            errorDetail = "現在AI呼び出しが集中しているか、無料利用枠の制限に達しました。少し時間をおいてからお試しください。";
           } else if (response.status === 504 || response.status === 408) {
             errorDetail = "AI生成の通信がタイムアウトしました。再度「再試行」を押すか、少し時間をおいてお試しください。";
           } else {
@@ -483,7 +678,8 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         setSummaryLearned(data.summary.learned);
         setSummaryChallenges(data.summary.challenges);
         setQuizQuestions(data.quizQuestions);
-        setSuccessMsg(`AIによる研修内容・学んだこと・質疑応答の要約と、理解度テスト（全${data.quizQuestions?.length || 3}問）の自動作成が完了しました！下部で内容をご確認いただけます。`);
+        const cacheNote = data.cached ? "（キャッシュから0秒で即時復元されました）" : "";
+        setSuccessMsg(`AIによる研修内容・学んだこと・質疑応答の要約と、理解度テスト（全${data.quizQuestions?.length || 3}問）の作成が完了しました！${cacheNote}`);
       } else {
         setErrorMsg(data.error || "AI自動生成の処理中にエラーが発生しました。再度「再試行」をお試しください。");
       }
@@ -497,7 +693,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       }
     } finally {
       setIsLoading(false);
+      isCallingRef.current = false;
       setUploadProgressText('');
+      // Set a short cooldown to protect user's free tier quota from accidental rapid re-clicks
+      setCooldownRemaining(5);
     }
   };
 
@@ -643,11 +842,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             />
           </div>
 
-          {/* 事業所名の下段：合同研修の事業所名（3つの事業所から追加があればプルダウン選択） */}
+          {/* 事業所名の下段：合同研修の事業所（3つの事業所から追加があればプルダウン選択） */}
           <div>
             <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
               <Building2 size={14} className="text-slate-600" />
-              合同研修の事業所名
+              合同研修の事業所
             </label>
             <select
               value={jointOfficeName}
@@ -1038,18 +1237,116 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             )}
           </div>
 
-          {/* Copy-paste manuals section */}
+          {/* Multi-format Materials Text & Files section (Word, Excel, PDF, Images, Direct Paste) */}
           <div className="space-y-2">
-            <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1">
-              研修資料テキスト
-            </h4>
-            <textarea
-              placeholder="教材、レジュメ、スライド資料、またはEラーニングの文章、ニュース記事などをここに貼り付けてください。"
-              value={copiedMaterialsText}
-              onChange={(e) => setCopiedMaterialsText(e.target.value)}
-              rows={5}
-              className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none font-meiryo-ui"
-            />
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1.5">
+                <FileText size={14} className="text-blue-600" />
+                研修資料テキスト・ファイル取り込み
+              </h4>
+              <span className="text-[11px] text-slate-500 font-meiryo-ui">PDF/Word/Excel/画像/コピペ対応</span>
+            </div>
+
+            {/* Quick Action Toolbar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => docFileInputRef.current?.click()}
+                disabled={isParsingDocument}
+                className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-300 transition cursor-pointer font-meiryo-ui shadow-xs disabled:opacity-50"
+              >
+                <Paperclip size={13} className="text-blue-600" />
+                ファイル添付 (PDF・Word・Excel・画像)
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePasteFromClipboard}
+                className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-300 transition cursor-pointer font-meiryo-ui shadow-xs"
+                title="クリップボードからテキストや画像を直接貼り付けます"
+              >
+                <Clipboard size={13} className="text-slate-600" />
+                クリップボードから貼り付け
+              </button>
+
+              <input
+                ref={docFileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/*"
+                onChange={handleDocFileInputChange}
+                className="hidden"
+              />
+            </div>
+
+            {/* Drag & Drop / Paste area with textarea */}
+            <div
+              onDrop={handleFileDrop}
+              onDragOver={(e) => e.preventDefault()}
+              className="relative rounded-lg border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition"
+            >
+              <textarea
+                placeholder="教材レジュメ、スライド資料、Eラーニング文章などを直接貼り付けてください。Word・Excel・PDF・画像（JPG/PNG）のドラッグ＆ドロップや、Ctrl+V / Cmd+V による貼り付けにも対応しています。"
+                value={copiedMaterialsText}
+                onChange={(e) => setCopiedMaterialsText(e.target.value)}
+                onPaste={handleMaterialsPaste}
+                rows={5}
+                className="w-full p-2.5 text-xs bg-transparent outline-none font-meiryo-ui resize-y min-h-[100px]"
+              />
+
+              {/* Parsing Document Loader Indicator */}
+              {isParsingDocument && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-xs flex items-center justify-center gap-2 text-xs text-blue-700 font-meiryo-ui rounded-lg">
+                  <Loader2 size={16} className="animate-spin text-blue-600" />
+                  <span>{documentParseNote || 'ファイルを解析しています...'}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Document parse note feedback */}
+            {documentParseNote && !isParsingDocument && (
+              <div className="text-[11px] text-emerald-700 font-meiryo-ui flex items-center gap-1">
+                <CheckCircle2 size={12} className="text-emerald-600 shrink-0" />
+                <span>{documentParseNote}</span>
+              </div>
+            )}
+
+            {/* Attached Multi-modal Files List (PDF & Images sent directly to Gemini) */}
+            {attachments.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <div className="text-[11px] font-bold text-slate-600 font-meiryo-ui">
+                  AI解析対象の添付資料（全 {attachments.length} 件）:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {attachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 px-2 py-1 rounded text-xs font-meiryo-ui text-slate-700 transition"
+                    >
+                      {att.type === 'pdf' ? (
+                        <FileText size={13} className="text-rose-600 shrink-0" />
+                      ) : (
+                        <ImageIcon size={13} className="text-emerald-600 shrink-0" />
+                      )}
+                      <span className="font-medium truncate max-w-[180px]">{att.fileName}</span>
+                      {att.size && (
+                        <span className="text-[10px] text-slate-400">
+                          ({formatFileSize(att.size)})
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(att.id)}
+                        className="text-slate-400 hover:text-rose-600 ml-1 p-0.5 rounded cursor-pointer transition"
+                        title="添付を削除"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1064,8 +1361,8 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
               <button
                 type="button"
                 onClick={handleAutoSummarize}
-                disabled={isLoading}
-                className="shrink-0 inline-flex items-center gap-1 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-bold text-xs transition cursor-pointer"
+                disabled={isLoading || cooldownRemaining > 0}
+                className="shrink-0 inline-flex items-center gap-1 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded font-bold text-xs transition cursor-pointer disabled:opacity-50"
               >
                 <RotateCw size={12} className={isLoading ? "animate-spin" : ""} />
                 再試行
@@ -1085,28 +1382,44 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
               <Loader2 className="animate-spin text-blue-600 shrink-0 mt-0.5" size={20} />
               <div className="space-y-1">
                 <div className="font-bold text-blue-900">
-                  {uploadProgressText || "AIが音声を解析し、研修報告書と理解度テストを作成しています..."}
+                  {uploadProgressText || "AIが資料・音声を解析し、研修報告書と理解度テストを作成しています..."}
                 </div>
                 <p className="text-xs text-blue-700 leading-relaxed">
-                  監査基準に適合する「箇条書き要約」「学んだこと」「質疑応答」「理解度テスト（正解・解説付き）」を自動生成中です。処理完了まで十数秒ほどそのままお待ちください。
+                  監査基準に適合する「箇条書き要約」「学んだこと」「質疑応答」「理解度テスト（正解・解説付き）」を自動生成中です。重複呼び出し防止ガード稼働中。
                 </p>
               </div>
             </div>
           )}
 
-          <button
-            type="button"
-            disabled={isLoading || (!theme.trim() && !selectedAudioFileRef.current && !audioBase64 && !copiedMaterialsText.trim())}
-            onClick={handleAutoSummarize}
-            className={`inline-flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-white shadow transition-all duration-150 cursor-pointer ${
-              isLoading || (!theme.trim() && !selectedAudioFileRef.current && !audioBase64 && !copiedMaterialsText.trim())
-                ? "bg-slate-300 cursor-not-allowed shadow-none"
-                : "bg-gradient-to-r from-amber-500 to-blue-600 hover:from-amber-600 hover:to-blue-700 scale-100 active:scale-95 shadow-md"
-            } font-meiryo-ui`}
-          >
-            <Cpu size={18} className={isLoading ? "animate-spin" : ""} />
-            {isLoading ? "AIが解析・要約・テスト生成中..." : "AIで要約 ＆ 理解度テストを自動生成"}
-          </button>
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              disabled={
+                isLoading || 
+                cooldownRemaining > 0 || 
+                (!theme.trim() && !selectedAudioFileRef.current && !audioBase64 && !copiedMaterialsText.trim() && attachments.length === 0)
+              }
+              onClick={handleAutoSummarize}
+              className={`inline-flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-white shadow transition-all duration-150 cursor-pointer ${
+                isLoading || cooldownRemaining > 0 || (!theme.trim() && !selectedAudioFileRef.current && !audioBase64 && !copiedMaterialsText.trim() && attachments.length === 0)
+                  ? "bg-slate-300 cursor-not-allowed shadow-none"
+                  : "bg-gradient-to-r from-amber-500 to-blue-600 hover:from-amber-600 hover:to-blue-700 scale-100 active:scale-95 shadow-md"
+              } font-meiryo-ui`}
+            >
+              <Cpu size={18} className={isLoading ? "animate-spin" : ""} />
+              {isLoading 
+                ? "AIが解析・要約・テスト生成中..." 
+                : cooldownRemaining > 0 
+                  ? `利用枠保護中（あと ${cooldownRemaining} 秒）` 
+                  : "AIで要約 ＆ 理解度テストを自動生成"
+              }
+            </button>
+
+            {/* Quota and loop safety reassurance label */}
+            <span className="text-[10px] text-slate-400 font-meiryo-ui">
+              ※ 連打防止ロック・同一データ自動キャッシュ・無料枠上限ガード機能搭載
+            </span>
+          </div>
         </div>
       </div>
 

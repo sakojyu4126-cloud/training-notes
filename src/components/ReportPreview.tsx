@@ -178,19 +178,20 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 2: 合同研修の事業所名 and 受講者名 (事業所名の一番左下段に追加) */}
+            {/* Row 2: 合同研修の事業所 (1行収まり) and 参加状況 (受講 ○名 / 未受講 ○名) */}
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center leading-tight">
-                合同研修の事業所名
+              <div className="col-span-2 bg-slate-50 px-2 py-1.5 border-r border-black font-bold flex items-center justify-center text-center text-[7.5pt] sm:text-[8pt] leading-tight whitespace-nowrap overflow-hidden">
+                合同研修の事業所
               </div>
               <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
                 <AutoFitSingleLine text={report.jointOfficeName || "なし"} basePt={9.5} />
               </div>
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
-                受講者名
+                参加状況
               </div>
-              <div className="col-span-4 px-3 py-1.5 flex items-center overflow-hidden whitespace-nowrap">
-                <AutoFitSingleLine text={report.jointAttendees || "なし"} basePt={9.5} />
+              <div className="col-span-4 px-3 py-1.5 flex items-center justify-around overflow-hidden whitespace-nowrap text-[9pt] font-meiryo-ui">
+                <span>受講　<span className="font-bold text-black">{report.attendeesCount ?? 0}</span> 名</span>
+                <span className="text-slate-700">未受講　<span className="font-bold text-black">{report.nonAttendeesCount ?? 0}</span> 名</span>
               </div>
             </div>
 
@@ -231,13 +232,13 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 5: Theme (Single line auto-fit with visual prominence, ~1.5x font size) */}
+            {/* Row 5: Theme (Single line auto-fit matching '研修報告書 兼 議事録' 14pt title size, non-bold) */}
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-2 bg-slate-100 px-3 py-2.5 border-r border-black font-bold flex items-center justify-center text-center">
+              <div className="col-span-2 bg-slate-50 px-3 py-2 border-r border-black font-bold flex items-center justify-center text-center">
                 議題・テーマ
               </div>
-              <div className="col-span-10 px-4 py-2.5 font-bold flex items-center bg-slate-50/20 overflow-hidden whitespace-nowrap">
-                <AutoFitSingleLine text={report.theme || "-"} basePt={16.5} minPt={9.5} bold={true} className="text-black tracking-wide" />
+              <div className="col-span-10 px-4 py-2 flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.theme || "-"} basePt={14} minPt={9} bold={false} className="text-black font-normal" />
               </div>
             </div>
 
@@ -251,31 +252,32 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 7: Attendance Status */}
+            {/* Row 7: Attendees and Non-attendees List (受講者名, count is in top box so no duplicates here) */}
             <div className="grid grid-cols-12 border-b border-black">
               <div className="col-span-2 bg-slate-50 px-3 py-2 border-r border-black font-bold flex items-center justify-center text-center">
-                参加状況
+                受講者名
               </div>
               <div className="col-span-10 p-2 space-y-1.5">
                 {/* Attendees and Non-attendees list */}
                 <div className="grid grid-cols-12 gap-2 text-[9pt] font-meiryo-ui">
-                  <div className="col-span-6 flex items-center gap-1 overflow-hidden whitespace-nowrap">
-                    <span className="font-bold shrink-0 text-black">受講 ({report.attendeesCount || 0}名):</span>
-                    <AutoFitSingleLine text={report.attendees || "未入力"} basePt={8.5} />
+                  <div className="col-span-7 flex items-center gap-1.5 overflow-hidden whitespace-nowrap">
+                    <span className="font-bold shrink-0 text-black">受講者：</span>
+                    <AutoFitSingleLine text={report.attendees || "未入力"} basePt={9} minPt={7} />
                   </div>
-                  <div className="col-span-6 flex items-center gap-1 text-slate-700 border-l border-slate-200 pl-2 overflow-hidden whitespace-nowrap">
-                    <span className="font-bold shrink-0 text-slate-700">未受講 ({report.nonAttendeesCount || 0}名):</span>
-                    <AutoFitSingleLine text={report.nonAttendees || "なし"} basePt={8.5} />
+                  <div className="col-span-5 flex items-center gap-1.5 text-slate-700 border-l border-slate-200 pl-2 overflow-hidden whitespace-nowrap">
+                    <span className="font-bold shrink-0 text-slate-700">未受講：</span>
+                    <AutoFitSingleLine text={report.nonAttendees || "なし"} basePt={9} minPt={7} />
                   </div>
                 </div>
 
-                {/* Follow-up comments */}
+                {/* Follow-up comments (Sized up to 8.5pt with clear legibility) */}
                 <div className="pt-1 border-t border-dashed border-slate-200 flex items-center gap-2 overflow-hidden whitespace-nowrap text-[8.5pt]">
-                  <span className="font-bold shrink-0 text-slate-600">未受講フォロー:</span>
+                  <span className="font-bold shrink-0 text-slate-700">未受講フォロー：</span>
                   <AutoFitSingleLine 
                     text={report.followUpRecord || "受講者全員出席のため、個別補講等のフォローアップは不要。"} 
-                    basePt={8} 
-                    className="italic text-slate-700"
+                    basePt={8.5} 
+                    minPt={8}
+                    className="text-slate-800"
                   />
                 </div>
               </div>
