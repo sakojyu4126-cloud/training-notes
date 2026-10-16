@@ -732,11 +732,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             />
           </div>
 
-          {/* 講師・進行担当 */}
+          {/* 講師・進行役 */}
           <div>
             <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
               <User size={14} className="text-blue-600" />
-              講師・進行担当 <span className="text-rose-500">*</span>
+              講師・進行役 <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
@@ -1126,7 +1126,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             value={summaryContent}
             onChange={(e) => setSummaryContent(e.target.value)}
             rows={5}
-            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-slate-50/50"
+            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-white resize-y leading-relaxed"
           />
         </div>
 
@@ -1140,7 +1140,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             value={summaryLearned}
             onChange={(e) => setSummaryLearned(e.target.value)}
             rows={5}
-            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-slate-50/50"
+            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-white resize-y leading-relaxed"
           />
         </div>
 
@@ -1154,7 +1154,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             value={summaryChallenges}
             onChange={(e) => setSummaryChallenges(e.target.value)}
             rows={5}
-            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-slate-50/50"
+            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-white resize-y leading-relaxed"
           />
         </div>
       </div>

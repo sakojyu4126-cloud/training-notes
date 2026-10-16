@@ -215,7 +215,7 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
             {/* Row 4: Facilitator and Report Date/Reporter */}
             <div className="grid grid-cols-12 border-b border-black">
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
-                講師・進行
+                講師・進行役
               </div>
               <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
                 <AutoFitSingleLine text={report.lecturer || "-"} basePt={9.5} />
@@ -231,13 +231,13 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 5: Theme (Single line auto-fit with visual prominence) */}
+            {/* Row 5: Theme (Single line auto-fit with visual prominence, ~1.5x font size) */}
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-2 bg-slate-100 px-3 py-2 border-r border-black font-bold flex items-center justify-center text-center">
+              <div className="col-span-2 bg-slate-100 px-3 py-2.5 border-r border-black font-bold flex items-center justify-center text-center">
                 議題・テーマ
               </div>
-              <div className="col-span-10 px-4 py-2 font-bold flex items-center bg-slate-50/30 overflow-hidden whitespace-nowrap">
-                <AutoFitSingleLine text={report.theme || "-"} basePt={11} bold={true} />
+              <div className="col-span-10 px-4 py-2.5 font-bold flex items-center bg-slate-50/20 overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine text={report.theme || "-"} basePt={16.5} minPt={9.5} bold={true} className="text-black tracking-wide" />
               </div>
             </div>
 
@@ -281,57 +281,40 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 8: ① 研修内容 (最小高さ50mm) */}
-            <div className="grid grid-cols-12 border-b border-black min-h-[50mm]">
+            {/* Row 8: ① 研修内容 (最小高さ58mmに拡大、罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 border-b border-black min-h-[58mm]">
               <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">①</span>
                 <span>研修内容</span>
               </div>
-              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 whitespace-pre-wrap dotted-notepad">
+              <div className="col-span-10 p-3.5 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[58mm]">
                 {formatToBullets(report.summary?.content)}
               </div>
             </div>
 
-            {/* Row 9: ② 研修を通して学んだこと気づいたこと (最小高さ40mm) */}
-            <div className="grid grid-cols-12 border-b border-black min-h-[40mm]">
+            {/* Row 9: ② 研修を通して学んだこと気づいたこと (最小高さ46mmに拡大、罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 border-b border-black min-h-[46mm]">
               <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">②</span>
                 <span>研修を通して</span>
                 <span>学んだこと</span>
                 <span>気づいたこと</span>
               </div>
-              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 whitespace-pre-wrap dotted-notepad">
+              <div className="col-span-10 p-3.5 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[46mm]">
                 {report.summary?.learned || "研修を通じた学びは未要約です。"}
               </div>
             </div>
 
-            {/* Row 10: ③ 事業所内での課題・質疑応答 (最小高さ40mm) */}
-            <div className="grid grid-cols-12 border-b border-black min-h-[40mm]">
+            {/* Row 10: ③ 事業所内での課題・質疑応答 (最下段のためborder-bなし、最小高さ46mmに拡大、罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 min-h-[46mm]">
               <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">③</span>
                 <span>事業所内で</span>
                 <span>の課題・</span>
                 <span>質疑応答</span>
               </div>
-              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 whitespace-pre-wrap dotted-notepad">
+              <div className="col-span-10 p-3.5 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[46mm]">
                 {report.summary?.challenges || "課題・質疑応答は未要約です。"}
-              </div>
-            </div>
-
-             {/* Row 11: Attached Materials checkboxes */}
-            <div className="grid grid-cols-12">
-              <div className="col-span-2 bg-slate-50 px-3 py-3 border-r border-black font-bold flex items-center justify-center text-center">
-                添付資料
-              </div>
-              <div className="col-span-10 px-4 py-3 flex items-center gap-6 font-meiryo-ui text-[9.5pt]">
-                <div className="flex items-center gap-1">
-                  <span className="inline-block border border-black w-3.5 h-3.5 text-center leading-[12px] font-bold text-blue-700 shrink-0">✓</span>
-                  <span>1，今回の研修で使用した教材類</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="inline-block border border-black w-3.5 h-3.5 text-center leading-[12px] font-bold text-blue-700 shrink-0">✓</span>
-                  <span>2，受講者の理解度テスト</span>
-                </div>
               </div>
             </div>
 
