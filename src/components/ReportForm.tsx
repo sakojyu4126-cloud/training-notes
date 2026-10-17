@@ -33,6 +33,7 @@ import {
   X,
   FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { 
   convertAudioWithWebAudio, 
   convertAudioFormat, 
@@ -423,10 +424,42 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Process any uploaded or pasted document (Word, Excel, PDF, Text, Images)
   const processUploadedDocument = async (file: File) => {
     setIsParsingDocument(true);
-    setDocumentParseNote(`ファイル「${file.name}」を解析中...`);
+    setDocumentParseNote(`ファイル「${file.name}」を取り込み中...`);
     setErrorMsg('');
 
     try {
+      const lowerName = (file.name || '').toLowerCase();
+
+      // 1. Client-side instant Excel processing for zero-latency, 100% reliable extraction
+      if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.csv') || file.type.includes('spreadsheet') || file.type.includes('excel')) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          const sheetTexts: string[] = [];
+          for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            if (!sheet) continue;
+            const csv = XLSX.utils.sheet_to_csv(sheet, { FS: '\t' });
+            const validLines = csv.split('\n').filter(line => line.trim().length > 0 && line.replace(/\t/g, '').trim().length > 0);
+            if (validLines.length > 0) {
+              sheetTexts.push(`【シート: ${sheetName}】\n` + validLines.slice(0, 1000).join('\n'));
+            }
+          }
+          const extractedText = sheetTexts.join('\n\n');
+          if (extractedText.trim()) {
+            setCopiedMaterialsText(prev => {
+              const separator = prev.trim() ? '\n\n---\n\n' : '';
+              return prev + separator + `【Excel資料: ${file.name}】\n` + extractedText;
+            });
+            setDocumentParseNote(`Excel「${file.name}」から表データを正常に取り込みました（${workbook.SheetNames.length}シート）`);
+            return;
+          }
+        } catch (excelErr) {
+          console.warn("Client-side Excel extraction fallback to server:", excelErr);
+        }
+      }
+
+      // 2. Server API fallback for Word (.docx), PDF, Images, or server-side parsing
       const base64Data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -485,16 +518,29 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Clipboard paste event handler on the text area
   const handleMaterialsPaste = async (e: React.ClipboardEvent) => {
     const clipboardData = e.clipboardData;
-    if (!clipboardData || !clipboardData.items) return;
+    if (!clipboardData) return;
 
-    // Check for files in clipboard (e.g. copied images/screenshots, files from file manager)
-    for (let i = 0; i < clipboardData.items.length; i++) {
-      const item = clipboardData.items[i];
-      if (item.kind === 'file') {
-        const file = item.getAsFile();
-        if (file) {
-          e.preventDefault();
-          await processUploadedDocument(file);
+    // 1. If text/plain exists (including Excel tabular data, tab-delimited cells, or text),
+    // DO NOT preventDefault! Let the textarea natively paste the text without interruption!
+    const textData = clipboardData.getData('text/plain');
+    if (textData && textData.trim().length > 0) {
+      setErrorMsg('');
+      setDocumentParseNote('クリップボードからテキスト・表データを取り込みました');
+      // Natural native paste happens automatically into the textarea
+      return;
+    }
+
+    // 2. If NO text data exists, check for pasted files (e.g. copied file from File Explorer or screenshot image)
+    if (clipboardData.items) {
+      for (let i = 0; i < clipboardData.items.length; i++) {
+        const item = clipboardData.items[i];
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            await processUploadedDocument(file);
+            return;
+          }
         }
       }
     }
@@ -502,7 +548,26 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
   // Paste from clipboard button
   const handlePasteFromClipboard = async () => {
+    setErrorMsg('');
     try {
+      // 1. Try reading text first (standard for Excel cells, tables, text)
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text && text.trim()) {
+            setCopiedMaterialsText(prev => {
+              const separator = prev.trim() ? '\n\n' : '';
+              return prev + separator + text.trim();
+            });
+            setDocumentParseNote('クリップボードからテキスト・表データを貼り付けました');
+            return;
+          }
+        } catch (textErr) {
+          console.warn("readText permission/fallback:", textErr);
+        }
+      }
+
+      // 2. If no text or text failed, try reading items (for images / screenshots)
       if (navigator.clipboard && navigator.clipboard.read) {
         try {
           const items = await navigator.clipboard.read();
@@ -517,25 +582,15 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             }
           }
         } catch (readErr) {
-          console.warn("navigator.clipboard.read fallback to readText:", readErr);
+          console.warn("navigator.clipboard.read failed:", readErr);
         }
       }
 
-      if (navigator.clipboard && navigator.clipboard.readText) {
-        const text = await navigator.clipboard.readText();
-        if (text && text.trim()) {
-          setCopiedMaterialsText(prev => {
-            const separator = prev.trim() ? '\n\n' : '';
-            return prev + separator + text.trim();
-          });
-          setDocumentParseNote('クリップボードのテキストを貼り付けました');
-          return;
-        }
-      }
-      setErrorMsg('クリップボードにデータが見つかりませんでした。テキストエリア内で直接 Ctrl+V (MacはCmd+V) をお試しください。');
+      // If browser security blocks clipboard API, guide user clearly
+      setDocumentParseNote('テキスト枠をクリックし、キーボードの【Ctrl+V】（Macは【Cmd+V】）で貼り付けてください');
     } catch (err: any) {
       console.warn("Clipboard access error:", err);
-      setErrorMsg('ブラウザの権限でクリップボードの直接読み取りが制限されています。テキスト枠内で直接 Ctrl+V (MacはCmd+V) を押して貼り付けてください。');
+      setDocumentParseNote('テキスト枠をクリックし、キーボードの【Ctrl+V】（Macは【Cmd+V】）で貼り付けてください');
     }
   };
 

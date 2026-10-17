@@ -477,15 +477,17 @@ app.post("/api/parse-document", async (req, res) => {
       });
     }
 
-    // 2. Excel spreadsheets (.xlsx, .xls)
-    if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || cleanMime.includes("spreadsheet") || cleanMime.includes("excel")) {
+    // 2. Excel spreadsheets (.xlsx, .xls, .xlsm, .csv, .tsv, .ods)
+    if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || lowerName.endsWith(".xlsm") || lowerName.endsWith(".csv") || lowerName.endsWith(".tsv") || lowerName.endsWith(".ods") || cleanMime.includes("spreadsheet") || cleanMime.includes("excel") || cleanMime.includes("csv")) {
       const workbook = XLSX.read(buffer, { type: "buffer" });
       const sheetTexts: string[] = [];
       for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
-        const csv = XLSX.utils.sheet_to_csv(sheet);
-        if (csv.trim()) {
-          sheetTexts.push(`【シート: ${sheetName}】\n${csv}`);
+        if (!sheet) continue;
+        const csv = XLSX.utils.sheet_to_csv(sheet, { FS: "\t" });
+        const validRows = csv.split("\n").filter(r => r.trim().length > 0 && r.replace(/\t/g, "").trim().length > 0);
+        if (validRows.length > 0) {
+          sheetTexts.push(`【シート: ${sheetName}】\n` + validRows.slice(0, 1000).join("\n"));
         }
       }
       const extractedText = sheetTexts.join("\n\n");
@@ -494,7 +496,7 @@ app.post("/api/parse-document", async (req, res) => {
         type: "text",
         text: extractedText,
         fileName,
-        note: `Excel（${fileName}）から表データを抽出しました（${workbook.SheetNames.length}シート）`
+        note: `Excel（${fileName}）から表データを抽出しました（${workbook.SheetNames.length}シート、${extractedText.length}文字）`
       });
     }
 
@@ -827,14 +829,15 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
       }
     };
 
-    // Safeguard 4: Use fast, stable primary model (gemini-3.5-flash-lite)
-    // Only 1 fallback to gemini-flash-latest, never an 8-call recursive loop!
-    const candidateModels = ["gemini-3.5-flash-lite", "gemini-flash-latest"];
+    // Safeguard 4: Use fast, stable primary model (gemini-flash-latest)
+    // with reliable fallbacks to gemini-3.8-flash and gemini-3.1-flash-lite
+    const candidateModels = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
     let lastError: any = null;
     let response: any = null;
 
     for (const model of candidateModels) {
       try {
+        console.log(`Calling Gemini API with model: ${model}...`);
         response = await ai.models.generateContent({
           model: model,
           contents: contents,
@@ -845,6 +848,7 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
           }
         });
         if (response && response.text) {
+          console.log(`Gemini generation succeeded with model: ${model}`);
           break;
         }
       } catch (err: any) {
@@ -858,12 +862,37 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
           throw new Error("AIの無料利用枠の制限（クォータ上限）に達しました。Google Cloudの利用枠保護のため処理を停止しました。少し時間をおいてから再度お試しいただくか、手入力での作成をご利用ください。");
         }
 
-        // Only retry with fallback model if transient 503 error
-        if (errMsg.includes("503") || errMsg.includes("UNAVAILABLE")) {
-          await new Promise(r => setTimeout(r, 1200));
-          continue;
+        // For temporary 503 (demand spike), 404, or network hiccup, try the next model
+        console.log(`Trying next candidate model after ${model}...`);
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+    }
+
+    // Graceful fallback: If multimodal input triggered high demand 503, retry with text prompt only
+    if (!response || !response.text) {
+      const textParts = contents.filter((c: any) => c.text);
+      if (textParts.length > 0 && contents.some((c: any) => c.inlineData || c.fileData)) {
+        console.log("Multimodal failed; attempting graceful text-only fallback...");
+        for (const model of candidateModels) {
+          try {
+            response = await ai.models.generateContent({
+              model: model,
+              contents: textParts,
+              config: {
+                ...generateConfig,
+                maxOutputTokens: 3500,
+                temperature: 0.2
+              }
+            });
+            if (response && response.text) {
+              console.log(`Text-only fallback succeeded with model: ${model}`);
+              break;
+            }
+          } catch (textErr: any) {
+            console.warn(`Text fallback on ${model} failed:`, textErr?.message);
+          }
         }
-        break;
       }
     }
 
