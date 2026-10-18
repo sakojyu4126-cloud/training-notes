@@ -20,7 +20,7 @@ const execAsync = promisify(exec);
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Set up JSON body parser with increased limit to support large audio base64 uploads (up to 100MB)
 app.use(express.json({ limit: "100mb" }));
@@ -978,8 +978,11 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
   }
 });
 
-// Configure Vite or Serve Static build
-const isProd = process.env.NODE_ENV === "production";
+// Configure Vite (development) or Serve Static build (production)
+const distPath = path.join(process.cwd(), "dist");
+const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, "index.html"));
+const isProd = process.env.NODE_ENV === "production" || hasDist;
+
 if (!isProd) {
   createViteServer({
     server: { middlewareMode: true },
@@ -991,9 +994,12 @@ if (!isProd) {
     });
   });
 } else {
-  const distPath = path.join(process.cwd(), "dist");
+  console.log(`Serving static assets from ${distPath} in production mode`);
   app.use(express.static(distPath));
   app.get("*", (req, res) => {
+    if (req.path.startsWith("/api/")) {
+      return res.status(404).json({ success: false, error: `API route ${req.path} not found` });
+    }
     res.sendFile(path.join(distPath, "index.html"));
   });
   app.listen(PORT, "0.0.0.0", () => {
