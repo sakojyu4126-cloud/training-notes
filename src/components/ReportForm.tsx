@@ -892,11 +892,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             />
           </div>
 
-          {/* 事業所名の下段：合同研修の事業所（3つの事業所から追加があればプルダウン選択） */}
+          {/* 事業所名の下段：合同研修事業所（3つの事業所から追加があればプルダウン選択） */}
           <div>
             <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
               <Building2 size={14} className="text-slate-600" />
-              合同研修の事業所
+              合同研修事業所
             </label>
             <select
               value={jointOfficeName}

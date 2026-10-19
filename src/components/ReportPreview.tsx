@@ -84,10 +84,12 @@ function AutoFitSingleLine({
       pt = Math.max(minPt, basePt * 0.54);
     } else if (len > 30) {
       pt = Math.max(minPt, basePt * 0.65);
-    } else if (len > 22) {
-      pt = Math.max(minPt, basePt * 0.76);
-    } else if (len > 15) {
-      pt = Math.max(minPt, basePt * 0.88);
+    } else if (len > 21) {
+      pt = Math.max(minPt, basePt * 0.72);
+    } else if (len > 17) {
+      pt = Math.max(minPt, basePt * 0.78);
+    } else if (len > 13) {
+      pt = Math.max(minPt, basePt * 0.85);
     }
   }
 
@@ -97,7 +99,7 @@ function AutoFitSingleLine({
       style={{ 
         fontSize: `${pt}pt`, 
         lineHeight: 1.15,
-        letterSpacing: len > 24 ? "-0.025em" : "normal"
+        letterSpacing: len > 17 ? "-0.035em" : len > 13 ? "-0.02em" : "normal"
       }}
       title={clean}
     >
@@ -181,7 +183,7 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
                 事業所名
               </div>
-              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
+              <div className="col-span-4 px-1.5 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
                 <AutoFitSingleLine text={report.officeName} basePt={10} bold={true} />
               </div>
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
@@ -192,12 +194,12 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 2: 合同研修の事業所 and 参加状況 (受講 ○名 / 未受講 ○名) */}
+            {/* Row 2: 合同研修事業所 and 参加状況 (受講 ○名 / 未受講 ○名) */}
             <div className="grid grid-cols-12 border-b border-black">
-              <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
-                合同研修の事業所
+              <div className="col-span-2 bg-slate-50 px-1 py-1.5 border-r border-black font-bold flex items-center justify-center text-center whitespace-nowrap text-[8.5pt]">
+                合同研修事業所
               </div>
-              <div className="col-span-4 px-3 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
+              <div className="col-span-4 px-1.5 py-1.5 border-r border-black flex items-center overflow-hidden whitespace-nowrap">
                 <AutoFitSingleLine text={report.jointOfficeName || "なし"} basePt={10} bold={true} />
               </div>
               <div className="col-span-2 bg-slate-50 px-3 py-1.5 border-r border-black font-bold flex items-center justify-center text-center">
