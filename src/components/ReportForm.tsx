@@ -222,25 +222,7 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
     }
   }, [officeName, initialReport]);
 
-  // Auto count attendees based on input names (separated by comma, space or newline)
-  useEffect(() => {
-    if (!attendees.trim()) {
-      setAttendeesCount(0);
-      return;
-    }
-    const names = attendees.split(/[,、\s\n]+/).filter(name => name.trim().length > 0);
-    setAttendeesCount(names.length);
-  }, [attendees]);
 
-  // Auto count non-attendees based on names
-  useEffect(() => {
-    if (!nonAttendees.trim() || nonAttendees.trim() === 'なし' || nonAttendees.trim() === '無し') {
-      setNonAttendeesCount(0);
-      return;
-    }
-    const names = nonAttendees.split(/[,、\s\n]+/).filter(name => name.trim().length > 0);
-    setNonAttendeesCount(names.length);
-  }, [nonAttendees]);
 
   // Direct Audio Recording Handlers
   const startRecording = async () => {
@@ -1070,14 +1052,23 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* 受講者名 */}
+          {/* 受講者名 */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1">
                 受講者名
               </label>
-              <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold font-meiryo-ui">
-                受講数: {attendeesCount} 名
-              </span>
+              <div className="flex items-center gap-1.5 text-xs font-meiryo-ui">
+                <span className="font-bold text-slate-700">受講者数:</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={attendeesCount}
+                  onChange={(e) => setAttendeesCount(parseInt(e.target.value, 10) || 0)}
+                  className="w-16 border border-slate-300 rounded px-2 py-0.5 text-right font-bold bg-white focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+                <span className="text-slate-600 font-bold">名</span>
+              </div>
             </div>
             <textarea
               placeholder="例：山田 太郎、鈴木 花子、佐藤 二郎、高橋 三郎、渡辺 四郎、伊藤 五郎"
@@ -1094,9 +1085,17 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
               <label className="block text-xs font-bold text-slate-700 font-meiryo-ui flex items-center gap-1">
                 未受講者名
               </label>
-              <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold font-meiryo-ui">
-                未受講数: {nonAttendeesCount} 名
-              </span>
+              <div className="flex items-center gap-1.5 text-xs font-meiryo-ui">
+                <span className="font-bold text-slate-700">未受講者数:</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={nonAttendeesCount}
+                  onChange={(e) => setNonAttendeesCount(parseInt(e.target.value, 10) || 0)}
+                  className="w-16 border border-slate-300 rounded px-2 py-0.5 text-right font-bold bg-white focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+                <span className="text-slate-600 font-bold">名</span>
+              </div>
             </div>
             <textarea
               placeholder="例：中村 六子、小林 七郎（いない場合は「なし」）"
