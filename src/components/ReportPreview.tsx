@@ -283,40 +283,76 @@ export default function ReportPreview({ report, onClose, onEdit }: ReportPreview
               </div>
             </div>
 
-            {/* Row 8: ① 研修内容 (最小高さ58mmに拡大、罫線撤廃・白地化、自動改行・伸縮対応) */}
-            <div className="grid grid-cols-12 border-b border-black min-h-[58mm]">
-              <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
+            {/* Row 8: ① 研修内容 (罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 border-b border-black min-h-[36mm]">
+              <div className="col-span-2 bg-slate-50 px-3 py-3 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">①</span>
                 <span>研修内容</span>
               </div>
-              <div className="col-span-10 p-3.5 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[58mm]">
+              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[36mm]">
                 {formatToBullets(report.summary?.content)}
               </div>
             </div>
 
-            {/* Row 9: ② 研修を通して学んだこと気づいたこと (最小高さ46mmに拡大、罫線撤廃・白地化、自動改行・伸縮対応) */}
-            <div className="grid grid-cols-12 border-b border-black min-h-[46mm]">
-              <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
+            {/* Row 9: ② 研修を通して学んだこと気づいたこと (罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 border-b border-black min-h-[28mm]">
+              <div className="col-span-2 bg-slate-50 px-3 py-3 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">②</span>
                 <span>研修を通して</span>
                 <span>学んだこと</span>
                 <span>気づいたこと</span>
               </div>
-              <div className="col-span-10 p-3.5 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[46mm]">
+              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[28mm]">
                 {report.summary?.learned || "研修を通じた学びは未要約です。"}
               </div>
             </div>
 
-            {/* Row 10: ③ 事業所内での課題・質疑応答 (最下段のためborder-bなし、最小高さ46mmに拡大、罫線撤廃・白地化、自動改行・伸縮対応) */}
-            <div className="grid grid-cols-12 min-h-[46mm]">
-              <div className="col-span-2 bg-slate-50 px-3 py-4 border-r border-black font-bold flex flex-col items-center justify-center text-center">
+            {/* Row 10: ③ 改善点や実践で取り組むこと (罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 border-b border-black min-h-[28mm]">
+              <div className="col-span-2 bg-slate-50 px-3 py-3 border-r border-black font-bold flex flex-col items-center justify-center text-center">
                 <span className="block mb-1">③</span>
+                <span>改善点や</span>
+                <span>実践で取り</span>
+                <span>組むこと</span>
+              </div>
+              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[28mm]">
+                {report.summary?.improvements || "改善点・実践での取り組みは未記載です。"}
+              </div>
+            </div>
+
+            {/* Row 11: ④ 事業所内での課題・質疑応答 (罫線撤廃・白地化、自動改行・伸縮対応) */}
+            <div className="grid grid-cols-12 border-b border-black min-h-[28mm]">
+              <div className="col-span-2 bg-slate-50 px-3 py-3 border-r border-black font-bold flex flex-col items-center justify-center text-center">
+                <span className="block mb-1">④</span>
                 <span>事業所内で</span>
                 <span>の課題・</span>
                 <span>質疑応答</span>
               </div>
-              <div className="col-span-10 p-3.5 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[46mm]">
+              <div className="col-span-10 p-3 font-ud-kyokasho text-[9pt] text-slate-900 bg-white break-words whitespace-pre-wrap leading-relaxed resize-y overflow-y-auto resizable-report-box min-h-[28mm]">
                 {report.summary?.challenges || "課題・質疑応答は未要約です。"}
+              </div>
+            </div>
+
+            {/* Row 12: 次回の研修予定 (一番最後) */}
+            <div className="grid grid-cols-12">
+              <div className="col-span-2 bg-slate-50 px-2 py-2 border-r border-black font-bold flex items-center justify-center text-center text-[8.5pt]">
+                次回の研修予定
+              </div>
+              <div className="col-span-2 px-3 py-2 border-r border-black flex items-center justify-center overflow-hidden whitespace-nowrap">
+                <span className="font-meiryo-ui text-[9.5pt]">
+                  {report.nextTrainingMonth ? (report.nextTrainingMonth.endsWith('月') ? report.nextTrainingMonth : `${report.nextTrainingMonth}月`) : "未定"}
+                </span>
+              </div>
+              <div className="col-span-2 bg-slate-50 px-2 py-2 border-r border-black font-bold flex items-center justify-center text-center text-[8.5pt]">
+                テーマ（予定）
+              </div>
+              <div className="col-span-6 px-3 py-2 flex items-center overflow-hidden whitespace-nowrap">
+                <AutoFitSingleLine 
+                  text={report.nextTrainingTheme || "未定"} 
+                  basePt={9.5} 
+                  minPt={7.5} 
+                  className="text-black font-normal" 
+                />
               </div>
             </div>
 

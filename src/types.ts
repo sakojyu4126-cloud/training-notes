@@ -15,6 +15,7 @@ export interface QuizQuestion {
 export interface TrainingSummary {
   content: string;      // 研修内容
   learned: string;      // 研修を通して学んだこと、気づいたこと
+  improvements?: string;// 改善点や実践で取り組むこと
   challenges: string;   // 事業所内での課題・質疑応答
 }
 
@@ -39,5 +40,7 @@ export interface TrainingReport {
   materials: string;      // 使用教材・資料
   summary: TrainingSummary;
   quizQuestions: QuizQuestion[];
+  nextTrainingMonth?: string; // 次回の研修予定（●月）
+  nextTrainingTheme?: string; // 次回の研修予定（テーマ）
   createdAt: string;
 }

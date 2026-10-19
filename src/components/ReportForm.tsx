@@ -104,7 +104,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
   // Summaries
   const [summaryContent, setSummaryContent] = useState('');
   const [summaryLearned, setSummaryLearned] = useState('');
+  const [summaryImprovements, setSummaryImprovements] = useState('');
   const [summaryChallenges, setSummaryChallenges] = useState('');
+  const [nextTrainingMonth, setNextTrainingMonth] = useState('');
+  const [nextTrainingTheme, setNextTrainingTheme] = useState('');
 
   // Quiz
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
@@ -172,7 +175,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       setMaterials(initialReport.materials);
       setSummaryContent(initialReport.summary.content);
       setSummaryLearned(initialReport.summary.learned);
+      setSummaryImprovements(initialReport.summary.improvements || '');
       setSummaryChallenges(initialReport.summary.challenges);
+      setNextTrainingMonth(initialReport.nextTrainingMonth || '');
+      setNextTrainingTheme(initialReport.nextTrainingTheme || '');
       setQuizQuestions(initialReport.quizQuestions || []);
     } else {
       setId('');
@@ -195,7 +201,10 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       setMaterials('');
       setSummaryContent('');
       setSummaryLearned('');
+      setSummaryImprovements('');
       setSummaryChallenges('');
+      setNextTrainingMonth('');
+      setNextTrainingTheme('');
       setQuizQuestions([]);
     }
   }, [initialReport]);
@@ -731,10 +740,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       if (data.success) {
         setSummaryContent(data.summary.content);
         setSummaryLearned(data.summary.learned);
+        setSummaryImprovements(data.summary.improvements || '');
         setSummaryChallenges(data.summary.challenges);
         setQuizQuestions(data.quizQuestions);
         const cacheNote = data.cached ? "（キャッシュから0秒で即時復元されました）" : "";
-        setSuccessMsg(`AIによる研修内容・学んだこと・質疑応答の要約と、理解度テスト（全${data.quizQuestions?.length || 3}問）の作成が完了しました！${cacheNote}`);
+        setSuccessMsg(`AIによる研修内容・学んだこと・改善点・質疑応答の要約と、理解度テスト（全${data.quizQuestions?.length || 3}問）の作成が完了しました！${cacheNote}`);
       } else {
         setErrorMsg(data.error || "AI自動生成の処理中にエラーが発生しました。再度「再試行」をお試しください。");
       }
@@ -785,9 +795,12 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
       summary: {
         content: summaryContent,
         learned: summaryLearned,
+        improvements: summaryImprovements,
         challenges: summaryChallenges
       },
       quizQuestions,
+      nextTrainingMonth,
+      nextTrainingTheme,
       createdAt: new Date().toISOString()
     };
 
@@ -1512,10 +1525,24 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           />
         </div>
 
-        {/* ③ 事業所内での課題・質疑応答 */}
+        {/* ③ 改善点や実践で取り組むこと */}
         <div>
           <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
-            ③事業所内での課題・質疑応答（Q＆Aを含む）
+            ③改善点や実践で取り組むこと
+          </label>
+          <textarea
+            placeholder="AIで要約、または手入力してください。研修を踏まえて業務改善や日々のケア・実践で具体的に取り組む事項を記載します。"
+            value={summaryImprovements}
+            onChange={(e) => setSummaryImprovements(e.target.value)}
+            rows={5}
+            className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-white resize-y leading-relaxed"
+          />
+        </div>
+
+        {/* ④ 事業所内での課題・質疑応答 */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
+            ④事業所内での課題・質疑応答（Q＆Aを含む）
           </label>
           <textarea
             placeholder="AIで要約、または手入力してください。今後の事業所独自のルール策定や、質疑応答（Q: 〜 A: 〜）を記載します。"
@@ -1524,6 +1551,39 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
             rows={5}
             className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-ud-kyokasho bg-white resize-y leading-relaxed"
           />
+        </div>
+
+        {/* 次回の研修予定 */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 font-meiryo-ui mb-1.5 flex items-center gap-1">
+            次回の研修予定
+          </label>
+          <div className="grid grid-cols-12 gap-3 items-center">
+            <div className="col-span-4 sm:col-span-3">
+              <input
+                type="text"
+                list="next-month-options"
+                placeholder="●月"
+                value={nextTrainingMonth}
+                onChange={(e) => setNextTrainingMonth(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-meiryo-ui"
+              />
+              <datalist id="next-month-options">
+                {Array.from({ length: 12 }, (_, i) => `${i + 1}月`).map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+            <div className="col-span-8 sm:col-span-9">
+              <input
+                type="text"
+                placeholder="テーマ（予定）"
+                value={nextTrainingTheme}
+                onChange={(e) => setNextTrainingTheme(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-meiryo-ui"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
