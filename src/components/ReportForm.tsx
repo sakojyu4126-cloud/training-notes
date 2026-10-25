@@ -483,6 +483,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
           return prev + separator + `【資料テキスト: ${file.name}】\n` + parsed.text;
         });
         setDocumentParseNote(parsed.note || `「${file.name}」からテキストを抽出しました`);
+        setMaterials(prev => {
+          if (!prev.trim()) return file.name;
+          if (!prev.includes(file.name)) return `${prev}、${file.name}`;
+          return prev;
+        });
       } else if (parsed.type === 'pdf' || parsed.type === 'image') {
         const newAtt: AttachedDoc = {
           id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -494,6 +499,11 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
         };
         setAttachments(prev => [...prev, newAtt]);
         setDocumentParseNote(parsed.note || `「${file.name}」をAI解析対象として添付しました`);
+        setMaterials(prev => {
+          if (!prev.trim()) return file.name;
+          if (!prev.includes(file.name)) return `${prev}、${file.name}`;
+          return prev;
+        });
       }
     } catch (err: any) {
       console.error("Document upload/parse error:", err);
@@ -720,6 +730,9 @@ export default function ReportForm({ initialReport, onSave, onCancel }: ReportFo
 
       const data = await response.json();
       if (data.success) {
+        if (!theme.trim() && data.summary.theme) {
+          setTheme(data.summary.theme);
+        }
         setSummaryContent(data.summary.content);
         setSummaryLearned(data.summary.learned);
         setSummaryImprovements(data.summary.improvements || '');

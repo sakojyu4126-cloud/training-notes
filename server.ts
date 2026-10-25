@@ -483,6 +483,14 @@ app.post("/api/parse-document", async (req, res) => {
       });
     }
 
+    // 1b. Legacy Word documents (.doc) guidance
+    if (lowerName.endsWith(".doc") && !lowerName.endsWith(".docx")) {
+      return res.status(400).json({
+        success: false,
+        error: `「${fileName}」は旧形式のWordファイル（.doc）です。Word等で開いて「名前を付けて保存」から最新の .docx または .pdf 形式に保存してから取り込んでください。`
+      });
+    }
+
     // 2. Excel spreadsheets (.xlsx, .xls, .xlsm, .csv, .tsv, .ods)
     if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || lowerName.endsWith(".xlsm") || lowerName.endsWith(".csv") || lowerName.endsWith(".tsv") || lowerName.endsWith(".ods") || cleanMime.includes("spreadsheet") || cleanMime.includes("excel") || cleanMime.includes("csv")) {
       const workbook = XLSX.read(buffer, { type: "buffer" });
@@ -564,15 +572,16 @@ app.post("/api/parse-document", async (req, res) => {
 });
 
 // AI Protection & Quota Safeguards:
-// 1. Strict concurrency locking (no overlapping AI calls)
-// 2. Sliding-window rate limiting (max 4 calls / min)
+// 1. Strict concurrency locking with auto-release timeout (prevents stale locks)
+// 2. Sliding-window rate limiting (max 6 calls / min)
 // 3. Deduplication Cache (zero token usage for identical inputs within 10 minutes)
 // 4. Instant halt on quota exceeded (RESOURCE_EXHAUSTED / 429) to prevent endless retries
 let isGeminiCallInProgress = false;
+let geminiCallStartedAt = 0;
 const requestTimestamps: number[] = [];
 const summaryCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const RATE_LIMIT_MAX_REQUESTS = 4;
+const RATE_LIMIT_MAX_REQUESTS = 6;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 
 // API: Summarize Audio or Text and Generate quiz with multi-layer quota protection
@@ -580,8 +589,8 @@ app.post("/api/summarize", async (req, res) => {
   let uploadedGeminiFile: any = null;
   let tempAudioFileToClean: string | null = null;
 
-  // Safeguard 1: Concurrency check (reject duplicate parallel calls)
-  if (isGeminiCallInProgress) {
+  // Safeguard 1: Concurrency check (reject duplicate parallel calls, auto-expire if stuck > 60s)
+  if (isGeminiCallInProgress && Date.now() - geminiCallStartedAt < 60000) {
     return res.status(429).json({ 
       success: false, 
       error: "現在、別のAI生成処理が進行中です。二重呼び出しやAPIクォータの過剰消費を防ぐため、完了までしばらくお待ちください。" 
@@ -632,15 +641,15 @@ app.post("/api/summarize", async (req, res) => {
 
     const ai = getGeminiClient();
 
-    // Prepare multi-modal inputs for Gemini
-    const contents: any[] = [];
+    // Prepare multi-modal parts for Gemini
+    const parts: any[] = [];
 
     // Add multimodal document attachments (PDF or Images)
     if (attachments && Array.isArray(attachments)) {
       for (const att of attachments) {
         if (att.data && (att.mimeType?.startsWith("image/") || att.mimeType === "application/pdf")) {
           const cleanBase64 = att.data.includes("base64,") ? att.data.split("base64,")[1] : att.data;
-          contents.push({
+          parts.push({
             inlineData: {
               data: cleanBase64,
               mimeType: att.mimeType,
@@ -688,14 +697,14 @@ app.post("/api/summarize", async (req, res) => {
       tempAudioFileToClean = resAudio.tempFilePath || null;
     }
 
-    // Add audio to contents if resolved
+    // Add audio to parts if resolved
     if (processedBuffer) {
       const sizeMB = processedBuffer.length / (1024 * 1024);
       console.log(`Audio ready for Gemini: size=${sizeMB.toFixed(2)}MB, mime=${processedMime}`);
 
       // If buffer is <= 20MB, pass as inlineData for lowest latency and maximum reliability
       if (sizeMB <= 20) {
-        contents.push({
+        parts.push({
           inlineData: {
             data: processedBuffer.toString("base64"),
             mimeType: processedMime,
@@ -727,7 +736,7 @@ app.post("/api/summarize", async (req, res) => {
           throw new Error(`Geminiファイル解析の準備が完了しませんでした（状態: ${fileStatus.state}）`);
         }
 
-        contents.push({
+        parts.push({
           fileData: {
             fileUri: fileStatus.uri,
             mimeType: fileStatus.mimeType || processedMime,
@@ -738,7 +747,7 @@ app.post("/api/summarize", async (req, res) => {
 
     // Prepare robust prompt for summarizing and generating Japanese audit-ready minutes & tests
     const systemInstruction = `
-あなたは訪問介護事業所および高齢者介護施設の「管理者」または「指導主事」です。
+あなたあなたは訪問介護事業所および高齢者介護施設の「管理者」または「指導主事」です。
 行政監査（実地指導・運営指導）に完全に耐えうる、客観的で完璧な法定研修報告書および講習会議事録を作成するのが任務です。
 介護保険法等の基準に準拠し、客観的な事実、専門用語、および実践的な指導内容を網羅した文章を日本語で作成してください。
 
@@ -781,7 +790,15 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
 これらを完全に統合し、①研修内容は【必ず「・」で始まる箇条書き（改行区切り）】に整形した上で、指定のJSONスキーマに従って出力してください。
 `;
 
-    contents.push({ text: userPrompt });
+    parts.push({ text: userPrompt });
+
+    // Ensure valid Gemini SDK contents format: array of Content objects with parts
+    const contents = [
+      {
+        role: "user",
+        parts: parts
+      }
+    ];
 
     const generateConfig = {
       systemInstruction: systemInstruction,
@@ -789,6 +806,10 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
       responseSchema: {
         type: Type.OBJECT,
         properties: {
+          theme: {
+            type: Type.STRING,
+            description: "研修テーマ・議題名（入力されたテーマがあればそれをそのまま維持、未定や空欄の場合は資料内容から最も適切な正式テーマ名を命名）。"
+          },
           content: {
             type: Type.STRING,
             description: "研修内容の詳細な要約。必ず「・」で始まる簡潔な箇条書き（各項目は改行で区切る）形式で作成してください。監査対応用、客観的で専門的かつ直感的な見やすさを最優先。"
@@ -842,23 +863,29 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
       }
     };
 
-    // Safeguard 4: Use fast, stable primary model (gemini-flash-latest)
-    // with reliable fallbacks to gemini-3.8-flash and gemini-3.1-flash-lite
-    const candidateModels = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+    // Safeguard 4: Use high-speed, reliable multimodal models (gemini-3.1-flash-lite, gemini-3.5-flash)
+    // with thinking budget kept low to guarantee sub-3-second responses without hanging
+    const candidateModels = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-flash-latest"];
     let lastError: any = null;
     let response: any = null;
 
     for (const model of candidateModels) {
       try {
         console.log(`Calling Gemini API with model: ${model}...`);
+        const configForModel: any = {
+          ...generateConfig,
+          maxOutputTokens: 3500,
+          temperature: 0.2
+        };
+        if (model.includes("3.5") || model.includes("3.8") || model.includes("latest")) {
+          // Prevent runaway thinking loops for fast, predictable completion
+          configForModel.thinkingConfig = { thinkingLevel: "LOW" };
+        }
+
         response = await ai.models.generateContent({
           model: model,
           contents: contents,
-          config: {
-            ...generateConfig,
-            maxOutputTokens: 3500,
-            temperature: 0.2
-          }
+          config: configForModel
         });
         if (response && response.text) {
           console.log(`Gemini generation succeeded with model: ${model}`);
@@ -882,21 +909,27 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
       }
     }
 
-    // Graceful fallback: If multimodal input triggered high demand 503, retry with text prompt only
+    // Graceful fallback: If multimodal input triggered error or high demand, retry with text prompt only
     if (!response || !response.text) {
-      const textParts = contents.filter((c: any) => c.text);
-      if (textParts.length > 0 && contents.some((c: any) => c.inlineData || c.fileData)) {
+      const textParts = parts.filter((p: any) => p.text);
+      if (textParts.length > 0 && parts.some((p: any) => p.inlineData || p.fileData)) {
         console.log("Multimodal failed; attempting graceful text-only fallback...");
+        const fallbackContents = [{ role: "user", parts: textParts }];
         for (const model of candidateModels) {
           try {
+            const configForModel: any = {
+              ...generateConfig,
+              maxOutputTokens: 3500,
+              temperature: 0.2
+            };
+            if (model.includes("3.5") || model.includes("3.8") || model.includes("latest")) {
+              configForModel.thinkingConfig = { thinkingLevel: "LOW" };
+            }
+
             response = await ai.models.generateContent({
               model: model,
-              contents: textParts,
-              config: {
-                ...generateConfig,
-                maxOutputTokens: 3500,
-                temperature: 0.2
-              }
+              contents: fallbackContents,
+              config: configForModel
             });
             if (response && response.text) {
               console.log(`Text-only fallback succeeded with model: ${model}`);
@@ -936,6 +969,7 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
     const resultPayload = {
       success: true,
       summary: {
+        theme: summaryResult.theme || theme || "",
         content: summaryResult.content || "",
         learned: summaryResult.learned || "",
         improvements: summaryResult.improvements || "",
@@ -969,6 +1003,7 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
   } finally {
     // Release concurrency lock
     isGeminiCallInProgress = false;
+    geminiCallStartedAt = 0;
 
     // Clean up temporary local files
     if (tempAudioFileToClean) {
