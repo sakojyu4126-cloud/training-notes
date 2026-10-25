@@ -14,6 +14,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import AdmZip from "adm-zip";
+import { PDFParse } from "pdf-parse";
 
 const execAsync = promisify(exec);
 
@@ -457,7 +459,88 @@ app.post("/api/audio/upload-chunk", express.raw({ type: "*/*", limit: "20mb" }),
   }
 });
 
-// API: Parse uploaded document (Word docx, Excel xls/xlsx, PDF, or Images)
+// Helper to extract text from .docx via Mammoth with Zip XML fallback (supports textboxes, tables, drawings)
+async function extractTextFromDocx(buffer: Buffer): Promise<string> {
+  let text = "";
+  try {
+    const res = await mammoth.extractRawText({ buffer });
+    if (res && res.value) {
+      text = res.value.trim();
+    }
+  } catch (mErr) {
+    console.warn("mammoth extraction warning, falling back to zip XML:", mErr);
+  }
+
+  // If text is short or empty (e.g. text is inside tables, textboxes, shapes), parse word/document.xml directly
+  try {
+    const zip = new AdmZip(buffer);
+    const xmlEntries = ["word/document.xml", "word/header1.xml", "word/header2.xml", "word/footer1.xml"];
+    const pieces: string[] = [];
+    for (const name of xmlEntries) {
+      const entry = zip.getEntry(name);
+      if (entry) {
+        const rawXml = zip.readAsText(entry);
+        const formatted = rawXml
+          .replace(/<w:br[^>]*\/>/gi, "\n")
+          .replace(/<w:tab[^>]*\/>/gi, "  ")
+          .replace(/<\/w:p>/gi, "\n")
+          .replace(/<\/w:tr>/gi, "\n");
+        const clean = formatted
+          .replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/gi, "$1")
+          .replace(/<[^>]+>/g, "");
+        const lines = clean.split("\n").map(l => l.trim()).filter(Boolean);
+        if (lines.length > 0) pieces.push(lines.join("\n"));
+      }
+    }
+    const zipText = pieces.join("\n\n").trim();
+    if (zipText.length > text.length) {
+      text = zipText;
+    }
+  } catch (zErr) {
+    console.warn("Zip XML extraction warning:", zErr);
+  }
+
+  return text.trim();
+}
+
+// Helper to extract text from legacy Word (.doc) binary files
+function extractTextFromBinaryDoc(buffer: Buffer): string {
+  // Try UTF-16LE characters (Word 97-2003 storage)
+  const pieces: string[] = [];
+  let cur = "";
+  for (let i = 0; i < buffer.length - 1; i += 2) {
+    const code = buffer.readUInt16LE(i);
+    if (
+      (code >= 0x0020 && code <= 0x007e) ||
+      code === 0x000a || code === 0x000d ||
+      (code >= 0x3000 && code <= 0x303f) || // Japanese punctuation
+      (code >= 0x3040 && code <= 0x309f) || // Hiragana
+      (code >= 0x30a0 && code <= 0x30ff) || // Katakana
+      (code >= 0x4e00 && code <= 0x9faf) || // Kanji
+      (code >= 0xff00 && code <= 0xffef)    // Fullwidth ASCII & forms
+    ) {
+      cur += String.fromCharCode(code);
+    } else {
+      if (cur.trim().length >= 4) {
+        pieces.push(cur.trim());
+      }
+      cur = "";
+    }
+  }
+  if (cur.trim().length >= 4) pieces.push(cur.trim());
+  
+  const utf16Text = pieces.join("\n").trim();
+  if (utf16Text.length >= 30) {
+    return utf16Text;
+  }
+
+  // Fallback: extract single-byte printable strings
+  const str = buffer.toString("binary");
+  const cleaned = str.replace(/[^\x20-\x7E\xA1-\xDF\u3000-\u9FFF\n\r]/g, " ");
+  return cleaned.replace(/ +/g, " ").trim();
+}
+
+// API: Parse uploaded document (Word docx/doc, Excel xls/xlsx, PDF, or Images)
 app.post("/api/parse-document", async (req, res) => {
   try {
     const { fileData, fileName, mimeType } = req.body;
@@ -472,22 +555,33 @@ app.post("/api/parse-document", async (req, res) => {
 
     // 1. Word documents (.docx)
     if (lowerName.endsWith(".docx") || cleanMime.includes("wordprocessingml") || cleanMime.includes("docx")) {
-      const result = await mammoth.extractRawText({ buffer });
-      const extractedText = result.value.trim();
-      return res.json({
-        success: true,
-        type: "text",
-        text: extractedText,
-        fileName,
-        note: `Word文書（${fileName}）から本文テキストを抽出しました（${extractedText.length}文字）`
-      });
+      const extractedText = await extractTextFromDocx(buffer);
+      if (extractedText.length > 0) {
+        return res.json({
+          success: true,
+          type: "text",
+          text: extractedText,
+          fileName,
+          note: `Word文書（${fileName}）から本文テキスト（${extractedText.length}文字）を正常に抽出しました。`
+        });
+      }
     }
 
-    // 1b. Legacy Word documents (.doc) guidance
-    if (lowerName.endsWith(".doc") && !lowerName.endsWith(".docx")) {
+    // 1b. Legacy Word documents (.doc)
+    if (lowerName.endsWith(".doc") || cleanMime.includes("msword")) {
+      const docText = extractTextFromBinaryDoc(buffer);
+      if (docText.length >= 20) {
+        return res.json({
+          success: true,
+          type: "text",
+          text: docText,
+          fileName,
+          note: `Word文書（${fileName}）からテキスト（${docText.length}文字）を抽出しました。`
+        });
+      }
       return res.status(400).json({
         success: false,
-        error: `「${fileName}」は旧形式のWordファイル（.doc）です。Word等で開いて「名前を付けて保存」から最新の .docx または .pdf 形式に保存してから取り込んでください。`
+        error: `「${fileName}」からテキストを自動抽出できませんでした。Word等で開いて「名前を付けて保存」から最新の .docx または .pdf 形式に保存してから取り込んでください。`
       });
     }
 
@@ -526,8 +620,31 @@ app.post("/api/parse-document", async (req, res) => {
       });
     }
 
-    // 4. PDF documents (.pdf)
+    // 4. PDF documents (.pdf) - extract text directly for instant, 100% reliable summarization
     if (lowerName.endsWith(".pdf") || cleanMime.includes("pdf")) {
+      let extractedPdfText = "";
+      try {
+        const parser = new PDFParse({ data: buffer });
+        const textResult = await parser.getText();
+        if (textResult && textResult.text) {
+          extractedPdfText = textResult.text.trim();
+        }
+      } catch (pdfErr) {
+        console.warn("PDF text extraction warning:", pdfErr);
+      }
+
+      // If PDF has readable text (at least 20 characters), return as text so it is immediately visible & fast
+      if (extractedPdfText.length >= 20) {
+        return res.json({
+          success: true,
+          type: "text",
+          text: extractedPdfText,
+          fileName,
+          note: `PDF資料（${fileName}）から本文テキスト（${extractedPdfText.length}文字）を正常に抽出しました。`
+        });
+      }
+
+      // If PDF is image/scan-based, attach as visual PDF for Gemini multimodal vision
       return res.json({
         success: true,
         type: "pdf",
@@ -535,7 +652,7 @@ app.post("/api/parse-document", async (req, res) => {
         mimeType: "application/pdf",
         base64: cleanBase64,
         size: buffer.length,
-        note: `PDF資料（${fileName}）を添付しました。AIが視覚・文書全体を直接読み取ります。`
+        note: `PDF資料（${fileName}）を添付しました。画像・スライド内容をAIが直接視覚解析します。`
       });
     }
 
@@ -647,12 +764,16 @@ app.post("/api/summarize", async (req, res) => {
     // Add multimodal document attachments (PDF or Images)
     if (attachments && Array.isArray(attachments)) {
       for (const att of attachments) {
-        if (att.data && (att.mimeType?.startsWith("image/") || att.mimeType === "application/pdf")) {
+        const isPdf = att.mimeType?.includes("pdf") || (att.fileName || "").toLowerCase().endsWith(".pdf");
+        const isImage = att.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(att.fileName || "");
+
+        if (att.data && (isPdf || isImage)) {
           const cleanBase64 = att.data.includes("base64,") ? att.data.split("base64,")[1] : att.data;
+          const mime = isPdf ? "application/pdf" : (att.mimeType || "image/jpeg");
           parts.push({
             inlineData: {
               data: cleanBase64,
-              mimeType: att.mimeType,
+              mimeType: mime,
             }
           });
         }
@@ -1030,7 +1151,7 @@ ${processedBuffer ? `【研修音声/録音】: 音声データが提供され�
 // Configure Vite (development) or Serve Static build (production)
 const distPath = path.join(process.cwd(), "dist");
 const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, "index.html"));
-const isProd = process.env.NODE_ENV === "production" || hasDist;
+const isProd = process.env.NODE_ENV === "production";
 
 if (!isProd) {
   createViteServer({
