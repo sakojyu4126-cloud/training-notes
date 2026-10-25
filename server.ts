@@ -22,7 +22,8 @@ const execAsync = promisify(exec);
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+// AI Studio architecture requires the app server to listen on port 3000 (nginx listens on 8080 and proxies to 3000)
+const PORT = 3000;
 
 // Set up JSON body parser with increased limit to support large audio base64 uploads (up to 100MB)
 app.use(express.json({ limit: "100mb" }));
